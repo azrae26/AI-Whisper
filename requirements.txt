@@ -5,3 +5,4 @@ keyboard
 sounddevice
 numpy
 openai
+opencc-python-reimplemented

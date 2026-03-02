@@ -1,10 +1,13 @@
 # 功能：語音辨識
-# 職責：將 WAV bytes 送至 OpenAI Audio Transcriptions API，回傳辨識文字
-# 依賴：openai
+# 職責：將 WAV bytes 送至 OpenAI Audio Transcriptions API，回傳繁體中文辨識文字
+# 依賴：openai, opencc
 
 import io
 
 from openai import OpenAI
+from opencc import OpenCC
+
+_s2t = OpenCC('s2t')
 
 SUPPORTED_MODELS = [
     'gpt-4o-transcribe',
@@ -27,4 +30,4 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
         model=model,
         file=('audio.wav', audio_file, 'audio/wav'),
     )
-    return response.text.strip()
+    return _s2t.convert(response.text.strip())

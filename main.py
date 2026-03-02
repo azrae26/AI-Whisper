@@ -2,11 +2,20 @@
 # 職責：UI 管理（主頁面/設定頁面）、系統列常駐、全域快捷鍵、錄音與辨識流程協調
 # 依賴：customtkinter, pystray, keyboard, recorder, transcriber, paster, settings
 
+import ctypes
+import math
 import os
 import sys
 import threading
 import time
 import datetime
+
+# 在任何 tkinter 初始化之前，鎖定為 System DPI Awareness
+# 跨螢幕移動時由 Windows GPU 做點陣圖縮放，避免 tkinter 逐 widget 重算造成 lag
+try:
+    ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+except Exception:
+    pass
 
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -48,10 +57,13 @@ class App(ctk.CTk):
         ctk.set_default_color_theme('blue')
 
         self.title('AI Whisper')
-        self.geometry('420x580')
         self.minsize(380, 520)
         self.resizable(True, True)
         self.configure(fg_color='#121212')
+
+        # 恢復上次視窗位置與大小
+        saved_geo = settings.get().get('geometry')
+        self.geometry(saved_geo if saved_geo else '420x580')
 
         # 設定視窗圖示（需用 PhotoImage，保留參照防 GC）
         if os.path.exists(ICON_PATH):
@@ -73,8 +85,10 @@ class App(ctk.CTk):
 
         # 狀態
         self._state = 'idle'  # idle | recording | processing
+        self._page = 'main'   # main | settings
         self._anim_dots = 0
         self._anim_job = None
+        self._history: list[str] = []  # 最近 5 組辨識結果
 
         self._build_ui()
         self._register_hotkey()
@@ -111,14 +125,14 @@ class App(ctk.CTk):
         top.grid_propagate(False)
 
         ctk.CTkLabel(
-            top, text='🎙 AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
+            top, text='◉ AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
             text_color='#F4F4F5'
         ).grid(row=0, column=0, padx=20, pady=14, sticky='w')
 
         ctk.CTkButton(
-            top, text='⚙', width=40, height=40,
+            top, text='•••', width=40, height=40,
             fg_color='transparent', hover_color='#27272A',
-            font=ctk.CTkFont(family=font_family, size=20), text_color='#A1A1AA',
+            font=ctk.CTkFont(family=font_family, size=16, weight='bold'), text_color='#71717A',
             command=self._show_settings
         ).grid(row=0, column=1, padx=(0, 12), pady=8, sticky='e')
 
@@ -154,43 +168,19 @@ class App(ctk.CTk):
         self._status_label = ctk.CTkLabel(
             frame,
             text='等待中',
-            font=ctk.CTkFont(family=font_family, size=14),
+            font=ctk.CTkFont(family=font_family, size=14, weight='bold'),
             text_color='#A1A1AA',
         )
         self._status_label.grid(row=2, column=0, pady=(0, 16))
 
-        # ── 結果區
-        result_frame = ctk.CTkFrame(frame, fg_color='#27272A', corner_radius=16)
-        result_frame.grid(row=3, column=0, sticky='nsew', padx=24, pady=(0, 12))
-        result_frame.grid_columnconfigure(0, weight=1)
-        result_frame.grid_rowconfigure(0, weight=1)
-
-        self._result_box = ctk.CTkTextbox(
-            result_frame,
-            fg_color='transparent',
-            font=ctk.CTkFont(family=font_family, size=15),
-            text_color='#F4F4F5',
-            wrap='word',
-            state='disabled',
+        # ── 結果區（可捲動，每條紀錄含獨立複製按鈕）
+        self._result_scroll = ctk.CTkScrollableFrame(
+            frame, fg_color='transparent', corner_radius=0,
+            scrollbar_button_color='#121212', scrollbar_button_hover_color='#3F3F46',
         )
-        self._result_box.grid(row=0, column=0, sticky='nsew', padx=12, pady=12)
-
-        # ── 底部按鈕列
-        bottom = ctk.CTkFrame(frame, fg_color='transparent')
-        bottom.grid(row=4, column=0, sticky='ew', padx=24, pady=(0, 20))
-        bottom.grid_columnconfigure(0, weight=1)
-
-        self._copy_btn = ctk.CTkButton(
-            bottom,
-            text='複製結果',
-            width=100, height=36,
-            corner_radius=8,
-            fg_color='#3F3F46', hover_color='#52525B',
-            font=ctk.CTkFont(family=font_family, size=14, weight='bold'),
-            command=self._copy_result,
-            state='disabled',
-        )
-        self._copy_btn.grid(row=0, column=0, sticky='e')
+        self._result_scroll.grid(row=3, column=0, sticky='nsew', padx=(24, 8), pady=(0, 12))
+        self._result_scroll.grid_columnconfigure(0, weight=1)
+        self._history_widgets: list[ctk.CTkFrame] = []
 
         return frame
 
@@ -336,12 +326,16 @@ class App(ctk.CTk):
     # ── 頁面切換 ──────────────────────────────────────────────────────────────
 
     def _show_main(self):
+        self._page = 'main'
         self._settings_frame.grid_remove()
         self._main_frame.grid()
+        self._main_frame.tkraise()
 
     def _show_settings(self):
+        self._page = 'settings'
         self._main_frame.grid_remove()
         self._settings_frame.grid()
+        self._settings_frame.tkraise()
 
     # ── 設定操作 ──────────────────────────────────────────────────────────────
 
@@ -472,7 +466,7 @@ class App(ctk.CTk):
             border_color='#4B5563', text_color='#A1A1AA',
             state='disabled'
         )
-        self._set_status('辨識中…', '#8B5CF6')
+        self._set_status('辨識中…', '#A78BFA')
 
         wav_bytes = recorder.stop()
         if not wav_bytes:
@@ -531,17 +525,39 @@ class App(ctk.CTk):
 
     # ── 動畫 ─────────────────────────────────────────────────────────────────
 
+    _PULSE_DIM = (200, 60, 60)       # 暗紅
+    _PULSE_BRIGHT = (255, 180, 180)  # 亮紅
+
+    @staticmethod
+    def _lerp_color(c1: tuple, c2: tuple, t: float) -> str:
+        r = int(c1[0] + (c2[0] - c1[0]) * t)
+        g = int(c1[1] + (c2[1] - c1[1]) * t)
+        b = int(c1[2] + (c2[2] - c1[2]) * t)
+        return f'#{r:02x}{g:02x}{b:02x}'
+
     def _start_anim(self):
-        self._anim_dots = 0
+        self._rec_start_time = time.time()
         self._tick_anim()
 
     def _tick_anim(self):
         if self._state != 'recording':
             return
-        dots = '●' * (self._anim_dots % 4)
-        self._status_label.configure(text=f'錄音中 {dots}')
-        self._anim_dots += 1
-        self._anim_job = self.after(400, self._tick_anim)
+
+        elapsed = time.time() - self._rec_start_time
+        minutes = int(elapsed) // 60
+        seconds = int(elapsed) % 60
+
+        # sin 波產生 0~1 平滑值，週期 2 秒
+        t = (math.sin(elapsed * math.pi) + 1) / 2
+
+        color = self._lerp_color(self._PULSE_DIM, self._PULSE_BRIGHT, t)
+        self._status_label.configure(
+            text=f'● 錄音中  {minutes:02d}:{seconds:02d}',
+            text_color=color,
+        )
+        self._mic_btn.configure(border_color=color)
+
+        self._anim_job = self.after(33, self._tick_anim)  # ~30fps
 
     def _stop_anim(self):
         if self._anim_job:
@@ -554,19 +570,48 @@ class App(ctk.CTk):
         self._status_label.configure(text=text, text_color=color)
 
     def _set_result(self, text: str):
-        self._result_box.configure(state='normal')
-        self._result_box.delete('1.0', 'end')
-        self._result_box.insert('1.0', text)
-        self._result_box.configure(state='disabled')
-        self._copy_btn.configure(state='normal')
+        self._history.insert(0, text)
+        self._history = self._history[:5]
+        self._render_history()
 
-    def _copy_result(self):
-        text = self._result_box.get('1.0', 'end').strip()
-        if text:
+    def _render_history(self):
+        font_family = "Microsoft JhengHei UI"
+        for w in self._history_widgets:
+            w.destroy()
+        self._history_widgets.clear()
+
+        for i, item in enumerate(self._history):
+            card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
+            card.grid(row=i, column=0, sticky='ew', pady=(0, 8))
+            card.grid_columnconfigure(0, weight=1)
+            card.grid_columnconfigure(1, weight=0)
+
+            text_color = '#F4F4F5' if i == 0 else '#A1A1AA'
+            label = ctk.CTkLabel(
+                card, text=item, wraplength=270, justify='left',
+                font=ctk.CTkFont(family=font_family, size=14),
+                text_color=text_color, anchor='nw',
+            )
+            label.grid(row=0, column=0, sticky='ew', padx=(14, 4), pady=12)
+
+            idx = i
+            btn = ctk.CTkButton(
+                card, text='複製', width=52, height=28, corner_radius=6,
+                fg_color='#3F3F46', hover_color='#52525B',
+                font=ctk.CTkFont(family=font_family, size=13),
+                command=lambda idx=idx: self._copy_history(idx),
+            )
+            btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=12)
+
+            self._history_widgets.append(card)
+
+    def _copy_history(self, idx: int):
+        if idx < len(self._history):
             self.clipboard_clear()
-            self.clipboard_append(text)
-            self._copy_btn.configure(text='已複製 ✓')
-            self.after(1500, lambda: self._copy_btn.configure(text='複製'))
+            self.clipboard_append(self._history[idx])
+            btn = self._history_widgets[idx].winfo_children()[1]
+            btn.configure(text='✓')
+            self.after(1200, lambda b=btn: b.configure(text='複製'))
 
     def _hotkey_display(self) -> str:
         hk = self._cfg.get('hotkey', 'ctrl+shift+h')
@@ -642,8 +687,12 @@ class App(ctk.CTk):
         self.lift()
         self.focus_force()
 
+    def _save_geometry(self):
+        settings.save({'geometry': self.geometry()})
+
     def _on_close(self):
-        """關閉視窗時縮到系統列"""
+        """關閉視窗時縮到系統列，並儲存位置"""
+        self._save_geometry()
         self.withdraw()
 
 

@@ -1,5 +1,5 @@
 # 功能：設定管理
-# 職責：讀寫 config.json（API Key、快捷鍵、模型、開機啟動）
+# 職責：讀寫 config.json（API Key、快捷鍵、模型、開機啟動、視窗位置）
 # 依賴：json, os, winreg, sys
 
 import json
