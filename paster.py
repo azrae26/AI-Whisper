@@ -89,11 +89,11 @@ def _is_cursor_at_end() -> bool:
         return False
 
 
-def paste_text(text: str, delay_ms: int = 250) -> None:
+def paste_text(text: str, delay_ms: int = 50) -> None:
     """
     寫入剪貼簿並模擬 Ctrl+V，在 worker thread 執行避免阻塞 UI
-    delay_ms：貼上前等待時間（讓焦點切回前景視窗）
-    偵測：uiautomation 讀取游標位置，零鍵盤操作、零游標移動
+    delay_ms：貼上前最短等待時間（讓焦點切回前景視窗）
+    UIA 偵測與 delay 並行：先跑偵測，再只 sleep 剩餘時間
     """
     if not text:
         return
@@ -102,12 +102,17 @@ def paste_text(text: str, delay_ms: int = 250) -> None:
         import comtypes
         comtypes.CoInitialize()
         try:
-            time.sleep(delay_ms / 1000)
+            t0 = time.perf_counter()
 
             at_end = _is_cursor_at_end()
 
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            remaining = delay_ms - elapsed_ms
+            if remaining > 0:
+                time.sleep(remaining / 1000)
+
             final_text = ('。' + text) if at_end else text
-            _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, final={repr(final_text[:40])}')
+            _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, uia={elapsed_ms:.0f}ms, final={repr(final_text[:40])}')
 
             if _tk_root:
                 _tk_root.clipboard_clear()

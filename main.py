@@ -12,8 +12,8 @@ import datetime
 
 # 修正 console 編碼，讓中文不會變問號
 try:
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[attr-defined]
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')  # type: ignore[attr-defined]
 except Exception:
     pass
 
@@ -73,14 +73,8 @@ class App(ctk.CTk):
         saved_geo = settings.get().get('geometry')
         self.geometry(saved_geo if saved_geo else '420x580')
 
-        # 設定視窗圖示（需用 PhotoImage，保留參照防 GC）
-        if os.path.exists(ICON_PATH):
-            try:
-                img = Image.open(ICON_PATH).resize((32, 32))
-                self._icon_photo = ImageTk.PhotoImage(img)
-                self.iconphoto(True, self._icon_photo)  # type: ignore[arg-type]
-            except Exception:
-                pass
+        # 視窗圖示延遲設定（CustomTkinter 在 Windows 會覆蓋，需在 init 之後設定）
+        self.after(250, self._set_window_icon)
 
         # 關閉按鈕 -> 縮到系統列
         self.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -107,6 +101,36 @@ class App(ctk.CTk):
         if not self._cfg.get('apiKey'):
             self.after(300, self._show_settings)
 
+    def _set_window_icon(self):
+        """用 Win32 API 直接設定視窗圖示，繞過 CustomTkinter 覆蓋問題"""
+        path = os.path.abspath(ICON_PATH)
+        if not os.path.exists(path):
+            return
+        try:
+            ico_path = os.path.join(BASE_DIR, 'assets', 'icon.ico')
+            if not os.path.exists(ico_path):
+                src = Image.open(path)
+                src.save(ico_path, format='ICO', sizes=[(256, 256), (64, 64), (48, 48), (32, 32), (16, 16)])
+            if sys.platform == 'win32' and os.path.exists(ico_path):
+                user32 = ctypes.windll.user32
+                hwnd = int(self.wm_frame(), 16)
+                # 依 DPI 決定最佳尺寸
+                cx_big = user32.GetSystemMetrics(11)    # SM_CXICON
+                cx_small = user32.GetSystemMetrics(49)  # SM_CXSMICON
+                ico_w = ctypes.c_wchar_p(ico_path)
+                LR_LOADFROMFILE = 0x10
+                LR_DEFAULTSIZE = 0x40
+                IMAGE_ICON = 1
+                icon_big = user32.LoadImageW(None, ico_w, IMAGE_ICON, cx_big, cx_big, LR_LOADFROMFILE)
+                icon_small = user32.LoadImageW(None, ico_w, IMAGE_ICON, cx_small, cx_small, LR_LOADFROMFILE)
+                WM_SETICON = 0x0080
+                if icon_big:
+                    user32.SendMessageW(hwnd, WM_SETICON, 1, icon_big)    # ICON_BIG
+                if icon_small:
+                    user32.SendMessageW(hwnd, WM_SETICON, 0, icon_small)  # ICON_SMALL
+        except Exception:
+            pass
+
     # ── UI 建構 ───────────────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -125,38 +149,45 @@ class App(ctk.CTk):
         font_family = "Microsoft JhengHei UI"
         frame = ctk.CTkFrame(self, fg_color='transparent')
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(3, weight=1)
+        frame.grid_rowconfigure(1, weight=1)
 
         # ── 頂部標題列
         top = ctk.CTkFrame(frame, fg_color='#18181B', corner_radius=0, height=56)
         top.grid(row=0, column=0, sticky='ew')
-        top.grid_columnconfigure(1, weight=1)
         top.grid_propagate(False)
 
-        # 藍色 logo 圖示
+        # logo + AI Whisper 絕對置中（place relx=0.5 不受右側按鈕影響）
+        title_frame = ctk.CTkFrame(top, fg_color='transparent')
+        title_frame.place(relx=0.5, rely=0.5, anchor='center')
         if os.path.exists(ICON_PATH):
             logo_img = ctk.CTkImage(Image.open(ICON_PATH), size=(23, 23))
-            ctk.CTkLabel(top, image=logo_img, text='').grid(row=0, column=0, padx=(20, 0), pady=(13, 15), sticky='w')
+            ctk.CTkLabel(title_frame, image=logo_img, text='').pack(side='left')
             self._header_logo = logo_img  # 防 GC
-
         ctk.CTkLabel(
-            top, text='AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
+            title_frame, text='AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
             text_color='#F4F4F5'
-        ).grid(row=0, column=1, padx=(8, 0), pady=14, sticky='w')
+        ).pack(side='left', padx=(8, 0))
 
         ctk.CTkButton(
             top, text='•••', width=40, height=40,
             fg_color='transparent', hover_color='#27272A',
             font=ctk.CTkFont(family=font_family, size=16, weight='bold'), text_color='#71717A',
             command=self._show_settings
-        ).grid(row=0, column=2, padx=(0, 12), pady=8, sticky='e')
+        ).place(relx=1.0, rely=0.5, anchor='e', x=-12)
 
-        # ── 麥克風按鈕區
-        mic_area = ctk.CTkFrame(frame, fg_color='transparent')
-        mic_area.grid(row=1, column=0, pady=(36, 12))
+        # ── content_area：佔滿標題列以下所有空間，子 widget 用 place() 定位
+        content_area = ctk.CTkFrame(frame, fg_color='transparent')
+        content_area.grid(row=1, column=0, sticky='nsew')
+        self._content_area = content_area
+
+        # mic_container：初始位置約垂直置中偏上（rely=0.35 anchor='n'），有歷史後動畫移至頂部
+        mic_container = ctk.CTkFrame(content_area, fg_color='transparent')
+        mic_container.place(relx=0.5, rely=0.35, anchor='n')
+        self._mic_container = mic_container
+        self._mic_centered = True
 
         self._mic_btn = ctk.CTkButton(
-            mic_area,
+            mic_container,
             text='開始錄音',
             width=200, height=56,
             corner_radius=28,
@@ -172,28 +203,37 @@ class App(ctk.CTk):
 
         # 快捷鍵提示
         self._hotkey_label = ctk.CTkLabel(
-            mic_area,
+            mic_container,
             text=self._hotkey_display(),
             font=ctk.CTkFont(family=font_family, size=12),
             text_color='#71717A',
         )
         self._hotkey_label.pack(pady=(12, 0))
 
-        # ── 狀態標籤
-        self._status_label = ctk.CTkLabel(
-            frame,
-            text='等待中',
-            font=ctk.CTkFont(family=font_family, size=14, weight='bold'),
-            text_color='#A1A1AA',
-        )
-        self._status_label.grid(row=2, column=0, pady=(0, 16))
+        # 狀態標籤（等待中時隱藏）
+        # 錄音狀態列：「● 錄音中：」和「MM:SS」拆為兩個 Label，計時器單獨往下 1px
+        # padx=(0,2) 使整體往左偏 1px
+        self._status_frame = ctk.CTkFrame(mic_container, fg_color='transparent')
+        self._status_frame.pack(pady=(4, 0), padx=(0, 2))
 
-        # ── 結果區（可捲動，每條紀錄含獨立複製按鈕）
+        status_font = ctk.CTkFont(family=font_family, size=14, weight='bold')
+        self._status_label = ctk.CTkLabel(
+            self._status_frame, text='',
+            font=status_font, text_color='#A1A1AA',
+        )
+        self._status_label.pack(side='left')
+
+        self._timer_label = ctk.CTkLabel(
+            self._status_frame, text='',
+            font=status_font, text_color='#A1A1AA',
+        )
+        self._timer_label.pack(side='left', pady=(2, 0))
+
+        # ── 結果區（初始隱藏，有歷史記錄後由動畫顯示）
         self._result_scroll = ctk.CTkScrollableFrame(
-            frame, fg_color='transparent', corner_radius=0,
+            content_area, fg_color='transparent', corner_radius=0,
             scrollbar_button_color='#121212', scrollbar_button_hover_color='#3F3F46',
         )
-        self._result_scroll.grid(row=3, column=0, sticky='nsew', padx=(24, 8), pady=(0, 12))
         self._result_scroll.grid_columnconfigure(0, weight=1)
         self._history_widgets: list[ctk.CTkFrame] = []
 
@@ -622,10 +662,8 @@ class App(ctk.CTk):
         t = (math.sin(elapsed * math.pi) + 1) / 2
 
         color = self._lerp_color(self._PULSE_DIM, self._PULSE_BRIGHT, t)
-        self._status_label.configure(
-            text=f'● 錄音中  {minutes:02d}:{seconds:02d}',
-            text_color=color,
-        )
+        self._status_label.configure(text='● 錄音中：', text_color=color)
+        self._timer_label.configure(text=f'{minutes:02d}:{seconds:02d}', text_color=color)
         self._mic_btn.configure(border_color=color)
 
         # 更新波形覆蓋層
@@ -642,7 +680,27 @@ class App(ctk.CTk):
     # ── UI 更新工具 ───────────────────────────────────────────────────────────
 
     def _set_status(self, text: str, color: str = '#A1A1AA'):
-        self._status_label.configure(text=text, text_color=color)
+        display = '' if text == '等待中' else text
+        self._status_label.configure(text=display, text_color=color)
+        self._timer_label.configure(text='', text_color=color)
+
+    def _animate_mic_up(self, step: int = 0):
+        """mic_container 從垂直置中向上滑動至頂部（ease-in-out），動畫結束後顯示結果捲動區"""
+        START = 0.35
+        TARGET = 0.07
+        TOTAL = 16       # 總幀數：16 × 11ms ≈ 176ms
+        INTERVAL = 11    # ms per frame
+        if step >= TOTAL:
+            self._mic_container.place(relx=0.5, rely=TARGET, anchor='n')
+            self._mic_centered = False
+            self._result_scroll.place(relx=0.05, rely=0.33, relwidth=0.93, relheight=0.67)
+            return
+        t = step / TOTAL
+        # smoothstep ease-in-out: t²(3−2t)
+        ease = t * t * (3 - 2 * t)
+        rely = START + (TARGET - START) * ease
+        self._mic_container.place(relx=0.5, rely=rely, anchor='n')
+        self.after(INTERVAL, lambda: self._animate_mic_up(step + 1))
 
     def _set_result(self, text: str):
         self._history.insert(0, text)
@@ -655,6 +713,10 @@ class App(ctk.CTk):
             w.destroy()
         self._history_widgets.clear()
 
+        # 首次出現歷史記錄時，觸發 mic 區塊向上滑動動畫
+        if self._history and self._mic_centered:
+            self._animate_mic_up()
+
         for i, item in enumerate(self._history):
             card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
             card.grid(row=i, column=0, sticky='ew', pady=(0, 8))
@@ -665,9 +727,9 @@ class App(ctk.CTk):
             label = ctk.CTkLabel(
                 card, text=item, wraplength=270, justify='left',
                 font=ctk.CTkFont(family=font_family, size=14),
-                text_color=text_color, anchor='nw',
+                text_color=text_color, anchor='w',
             )
-            label.grid(row=0, column=0, sticky='ew', padx=(14, 4), pady=12)
+            label.grid(row=0, column=0, sticky='nsew', padx=(14, 4), pady=8)
 
             idx = i
             btn = ctk.CTkButton(
@@ -676,7 +738,7 @@ class App(ctk.CTk):
                 font=ctk.CTkFont(family=font_family, size=13),
                 command=lambda idx=idx: self._copy_history(idx),
             )
-            btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=12)
+            btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=8)
 
             self._history_widgets.append(card)
 
@@ -703,31 +765,95 @@ class App(ctk.CTk):
 
         hotkey = self._cfg.get('hotkey', 'ctrl+shift+h')
         try:
-            keyboard.add_hotkey(hotkey, lambda: self.after(0, self._toggle_recording))
+            keyboard.add_hotkey(hotkey, lambda: self.after(0, self._toggle_recording))  # type: ignore[arg-type]
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey} 已註冊')
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
 
-        # 歷史快捷鍵 1~5：貼上對應記憶
+        # 歷史快捷鍵 1~5：用 Win32 RegisterHotKey 確保按鍵完全攔截不穿透
+        self._register_history_hotkeys()
+
+    # ── Win32 RegisterHotKey（記憶快捷鍵）────────────────────────────────────
+
+    _HK_BASE_ID = 0xBFF0
+    _MOD_MAP = {'alt': 0x0001, 'ctrl': 0x0002, 'control': 0x0002, 'shift': 0x0004}
+
+    @staticmethod
+    def _key_to_vk(name: str) -> int:
+        k = name.lower().strip()
+        if len(k) == 1 and k.isdigit():
+            return ord(k)
+        if len(k) == 1 and k.isalpha():
+            return ord(k.upper())
+        if k.startswith('f') and k[1:].isdigit():
+            return 0x6F + int(k[1:])
+        return {'space': 0x20, 'enter': 0x0D, 'tab': 0x09, 'pause': 0x13,
+                'escape': 0x1B, 'backspace': 0x08, 'delete': 0x2E}.get(k, 0)
+
+    def _parse_hotkey_win32(self, hk_str: str):
+        parts = [p.strip().lower() for p in hk_str.split('+')]
+        mods, vk = 0, 0
+        for p in parts:
+            if p in self._MOD_MAP:
+                mods |= self._MOD_MAP[p]
+            else:
+                vk = self._key_to_vk(p)
+        return mods, vk
+
+    def _register_history_hotkeys(self):
+        from ctypes import wintypes
+
+        # 停止舊的監聽執行緒
+        old_tid = getattr(self, '_hk_thread_id', 0)
+        old_thread = getattr(self, '_hk_thread', None)
+        if old_thread and old_thread.is_alive() and old_tid:
+            ctypes.windll.user32.PostThreadMessageW(old_tid, 0x0012, 0, 0)  # WM_QUIT
+            old_thread.join(timeout=1.0)
+        self._hk_thread_id = 0
+
         _default_hks = ['alt+shift+1', 'alt+shift+2', 'alt+shift+3', 'alt+shift+4', 'alt+shift+5']
         history_hotkeys = self._cfg.get('history_hotkeys', _default_hks)
+        parsed = []
         for i in range(5):
-            idx = i
             hk = history_hotkeys[i] if i < len(history_hotkeys) else _default_hks[i]
-            if not hk:
-                continue
-            try:
-                keyboard.add_hotkey(hk, lambda idx=idx: self.after(0, self._paste_history, idx))
-            except Exception as e:
-                _debug_print(f'[main][{now_str()}] ❌ 記憶快捷鍵 {hk} 註冊失敗: {e}')
-        _debug_print(f'[main][{now_str()}] ✅ 記憶快捷鍵 1~5 已註冊')
+            parsed.append(self._parse_hotkey_win32(hk) if hk else (0, 0))
+
+        app = self
+
+        def _listener():
+            user32 = ctypes.windll.user32
+            user32.RegisterHotKey.restype = ctypes.c_bool
+            user32.RegisterHotKey.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint, ctypes.c_uint]
+            app._hk_thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+            ok_count = 0
+            for i, (mods, vk) in enumerate(parsed):
+                if not vk:
+                    continue
+                if user32.RegisterHotKey(None, app._HK_BASE_ID + i, mods | 0x4000, vk):
+                    ok_count += 1
+                else:
+                    _debug_print(f'[main][{now_str()}] ❌ Win32 記憶快捷鍵 {i + 1} 註冊失敗 (mods=0x{mods:X} vk=0x{vk:X})')
+            _debug_print(f'[main][{now_str()}] ✅ 記憶快捷鍵 {ok_count}/5 已註冊 (Win32)')
+
+            msg = wintypes.MSG()
+            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                if msg.message == 0x0312:  # WM_HOTKEY
+                    idx = msg.wParam - app._HK_BASE_ID
+                    if 0 <= idx < 5:
+                        app.after(0, app._paste_history, idx)
+
+            for i in range(5):
+                user32.UnregisterHotKey(None, app._HK_BASE_ID + i)
+
+        self._hk_thread = threading.Thread(target=_listener, daemon=True, name='HotkeyListener')
+        self._hk_thread.start()
 
     def _paste_history(self, idx: int):
         """用 Alt+Shift+1~5 貼上對應記憶"""
         if idx < len(self._history):
             text = self._history[idx]
             _debug_print(f'[main][{now_str()}] 📋 貼上記憶 {idx + 1}: "{text[:20]}"')
-            paster.paste_text(text, delay_ms=100)
+            paster.paste_text(text, delay_ms=30)
         else:
             _debug_print(f'[main][{now_str()}] ⚠️ 記憶 {idx + 1} 不存在')
 
@@ -737,7 +863,7 @@ class App(ctk.CTk):
         if not os.path.exists(ICON_PATH):
             return
 
-        base = Image.open(ICON_PATH).resize((64, 64)).convert('RGBA')
+        base = Image.open(ICON_PATH).convert('RGBA')
         self._tray_icon_idle = base
 
         # 錄音狀態：只換背景底色為紅色，白色圖示保留
