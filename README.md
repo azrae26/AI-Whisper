@@ -26,7 +26,7 @@ python main.py
 
 | 項目 | 說明 |
 |------|------|
-| API Key | OpenAI API Key，存在本機 config.json |
+| API Key | OpenAI API Key，存在本機 config.json（exe 同目錄；開發時為 script 同目錄） |
 | 辨識模型 | `gpt-4o-transcribe`（最強）/ `whisper-1`（舊版相容） |
 | 全域快捷鍵 | 格式如 `ctrl+shift+h` |
 | 開機啟動 | 寫入 Windows 登錄機碼自動啟動 |
@@ -38,7 +38,7 @@ python -m pip install pyinstaller
 python -m PyInstaller --onefile --windowed --icon=assets/icon.ico --name="AI Whisper" main.py
 ```
 
-產出位於 `dist/AI Whisper.exe`，分享時附上 `assets/` 資料夾即可。
+產出位於 `dist/AI Whisper.exe`，分享時附上 `assets/` 資料夾即可。首次執行後，`config.json` 會產生在 exe 同目錄，設定可持久保存。
 
 ## 依賴套件
 

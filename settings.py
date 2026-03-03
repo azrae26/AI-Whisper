@@ -15,7 +15,11 @@ def _safe_print(msg: str):
         print(msg.encode('ascii', 'replace').decode('ascii'))
 
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 打包後 config 存 exe 同目錄（可持久）；開發時存 script 同目錄
+if getattr(sys, '_MEIPASS', None):
+    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 APP_NAME = 'AIWhisper'
 
