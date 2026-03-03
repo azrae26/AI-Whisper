@@ -1,0 +1,22 @@
+---
+description: AI Whisper 開發流程規範
+globs: "**/*.py"
+---
+
+# 開發流程規範
+
+## 修改後自動重啟
+
+每次修改完 .py 程式碼後，必須自動重啟 AI Whisper 讓改動生效，不需要等使用者要求。
+
+## 快速啟動命令
+
+重啟 AI Whisper 時使用以下命令（不要用 Stop-Process + Start-Sleep，太慢）：
+
+```powershell
+taskkill /F /IM python.exe 2>$null; py main.py
+```
+
+- 使用 Shell tool 的 `working_directory` 參數指向 workspace 根目錄
+- 設定 `block_until_ms: 0` 立即背景執行
+- 不要寫死磁碟代號（家裡 F:\、公司 D:\）
