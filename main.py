@@ -278,10 +278,10 @@ class App(ctk.CTk):
         ).grid(row=row, column=0, sticky='w', pady=(0, 6))
         row += 1
 
-        self._hotkey_var = ctk.StringVar(value=self._cfg.get('hotkey', 'ctrl+shift+h'))
+        self._hotkey_var = ctk.StringVar(value=self._cfg.get('hotkey', 'pause'))
         self._hotkey_capture_btn = ctk.CTkButton(
             scroll,
-            text=self._cfg.get('hotkey', 'ctrl+shift+h').upper(),
+            text=self._cfg.get('hotkey', 'pause').upper(),
             height=40,
             corner_radius=8,
             fg_color='#27272A', hover_color='#3F3F46',
@@ -291,6 +291,42 @@ class App(ctk.CTk):
             command=self._start_hotkey_capture,
         )
         self._hotkey_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        row += 1
+
+        # 貼上歷史快捷鍵（1=最新、5=最舊）
+        add_label('貼上歷史快捷鍵（1=最新、5=最舊）')
+        row += 1
+
+        self._paste_hotkey_vars: list[ctk.StringVar] = []
+        self._paste_hotkey_btns: list[ctk.CTkButton] = []
+        for i in range(5):
+            pk = f'pasteHotkey{i + 1}'
+            var = ctk.StringVar(value=self._cfg.get(pk, f'alt+shift+{i + 1}'))
+            self._paste_hotkey_vars.append(var)
+            row_frame = ctk.CTkFrame(scroll, fg_color='transparent')
+            row_frame.grid(row=row, column=0, sticky='ew', pady=(0, 4))
+            row_frame.grid_columnconfigure(0, weight=0)
+            row_frame.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(
+                row_frame, text=f'第 {i + 1} 句',
+                font=ctk.CTkFont(family=font_family, size=13),
+                text_color='#A1A1AA', width=48,
+            ).grid(row=0, column=0, padx=(0, 8), pady=4)
+            btn = ctk.CTkButton(
+                row_frame,
+                text=var.get().upper(),
+                height=36,
+                corner_radius=8,
+                fg_color='#27272A', hover_color='#3F3F46',
+                border_width=1, border_color='#3F3F46',
+                font=ctk.CTkFont(family=font_family, size=13),
+                text_color='#F4F4F5',
+                command=lambda idx=i: self._start_paste_hotkey_capture(idx),
+            )
+            btn.grid(row=0, column=1, sticky='ew', pady=4)
+            self._paste_hotkey_btns.append(btn)
+            row += 1
+
         row += 1
 
         # 開機啟動
@@ -354,8 +390,24 @@ class App(ctk.CTk):
     }
 
     def _start_hotkey_capture(self):
-        """進入快捷鍵捕捉模式，用 keyboard.hook 追蹤按鍵組合"""
+        """進入快捷鍵捕捉模式（錄音），用 keyboard.hook 追蹤按鍵組合"""
+        self._capturing_target = 'recording'
         self._hotkey_capture_btn.configure(
+            text='請按下組合鍵…',
+            fg_color='#1E3A5F', border_color='#2563EB', text_color='#93C5FD',
+        )
+        try:
+            keyboard.unhook_all()
+        except Exception:
+            pass
+        self._capture_keys = set()
+        self._capturing = True
+        keyboard.hook(self._on_capture_event)
+
+    def _start_paste_hotkey_capture(self, idx: int):
+        """進入快捷鍵捕捉模式（貼上歷史第 idx+1 句）"""
+        self._capturing_target = idx
+        self._paste_hotkey_btns[idx].configure(
             text='請按下組合鍵…',
             fg_color='#1E3A5F', border_color='#2563EB', text_color='#93C5FD',
         )
@@ -394,11 +446,19 @@ class App(ctk.CTk):
             keyboard.unhook_all()
         except Exception:
             pass
-        self._hotkey_var.set(hotkey)
-        self._hotkey_capture_btn.configure(
-            text=hotkey.upper(),
-            fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
-        )
+        target = getattr(self, '_capturing_target', 'recording')
+        if target == 'recording':
+            self._hotkey_var.set(hotkey)
+            self._hotkey_capture_btn.configure(
+                text=hotkey.upper(),
+                fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
+            )
+        elif isinstance(target, int) and 0 <= target < 5:
+            self._paste_hotkey_vars[target].set(hotkey)
+            self._paste_hotkey_btns[target].configure(
+                text=hotkey.upper(),
+                fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
+            )
         self._register_hotkey()
 
     def _finish_capture_cancel(self):
@@ -406,11 +466,19 @@ class App(ctk.CTk):
             keyboard.unhook_all()
         except Exception:
             pass
-        hk = self._hotkey_var.get()
-        self._hotkey_capture_btn.configure(
-            text=hk.upper(),
-            fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
-        )
+        target = getattr(self, '_capturing_target', 'recording')
+        if target == 'recording':
+            hk = self._hotkey_var.get()
+            self._hotkey_capture_btn.configure(
+                text=hk.upper(),
+                fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
+            )
+        elif isinstance(target, int) and 0 <= target < 5:
+            hk = self._paste_hotkey_vars[target].get()
+            self._paste_hotkey_btns[target].configure(
+                text=hk.upper(),
+                fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
+            )
         self._register_hotkey()
 
     def _save_settings(self):
@@ -420,6 +488,8 @@ class App(ctk.CTk):
             'hotkey': self._hotkey_var.get().strip().lower(),
             'startup': self._startup_var.get(),
         }
+        for i in range(5):
+            new_cfg[f'pasteHotkey{i + 1}'] = self._paste_hotkey_vars[i].get().strip().lower()
         settings.save(new_cfg)
         settings.set_startup(new_cfg['startup'])
         self._cfg = settings.get()
@@ -613,9 +683,15 @@ class App(ctk.CTk):
             btn.configure(text='✓')
             self.after(1200, lambda b=btn: b.configure(text='複製'))
 
+    def _paste_history_item(self, idx: int):
+        """貼上歷史紀錄中第 idx 句（0=最新、4=最舊），由快捷鍵 Alt+Shift+1~5 觸發"""
+        if 0 <= idx < len(self._history):
+            paster.paste_text(self._history[idx])
+
     def _hotkey_display(self) -> str:
-        hk = self._cfg.get('hotkey', 'ctrl+shift+h')
-        return f'快捷鍵：{hk.upper()}'
+        hk = self._cfg.get('hotkey', 'pause')
+        p1 = self._cfg.get('pasteHotkey1', 'alt+shift+1').upper()
+        return f'錄音：{hk.upper()}　貼上 1：{p1}（可於設定自訂）'
 
     # ── 快捷鍵 ────────────────────────────────────────────────────────────────
 
@@ -626,12 +702,27 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-        hotkey = self._cfg.get('hotkey', 'ctrl+shift+h')
+        hotkey = self._hotkey_var.get().strip().lower() if hasattr(self, '_hotkey_var') else self._cfg.get('hotkey', 'pause')
         try:
             keyboard.add_hotkey(hotkey, lambda: self.after(0, self._toggle_recording))
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey} 已註冊')
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
+
+        # 貼上歷史第 1~5 句（從 UI 變數或設定讀取，捕捉後立即生效）
+        for i in range(5):
+            paste_idx = i
+            if hasattr(self, '_paste_hotkey_vars') and i < len(self._paste_hotkey_vars):
+                pk = self._paste_hotkey_vars[i].get().strip().lower() or self._cfg.get(f'pasteHotkey{i + 1}', f'alt+shift+{i + 1}')
+            else:
+                pk = self._cfg.get(f'pasteHotkey{i + 1}', f'alt+shift+{i + 1}')
+            try:
+                keyboard.add_hotkey(
+                    pk,
+                    lambda idx=paste_idx: self.after(0, lambda i=idx: self._paste_history_item(i)),
+                )
+            except Exception as e:
+                _debug_print(f'[main][{now_str()}] ❌ 貼上快捷鍵 {pk} 註冊失敗: {e}')
 
     # ── 系統列 ────────────────────────────────────────────────────────────────
 
