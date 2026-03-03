@@ -38,8 +38,9 @@ import waveform
 
 # ── 路徑 ─────────────────────────────────────────────────────────────────────
 # 打包後 assets 在 _MEIPASS 暫存目錄內；開發時在 script 同目錄
-if getattr(sys, '_MEIPASS', None):
-    ASSETS_DIR = os.path.join(sys._MEIPASS, 'assets')
+_meipass = getattr(sys, '_MEIPASS', None)
+if _meipass:
+    ASSETS_DIR = os.path.join(_meipass, 'assets')
 else:
     ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 ICON_PATH = os.path.join(ASSETS_DIR, 'icon_256.png')
