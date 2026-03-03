@@ -303,10 +303,57 @@ class App(ctk.CTk):
             border_width=1, border_color='#3F3F46',
             font=ctk.CTkFont(family=font_family, size=15, weight='bold'),
             text_color='#F4F4F5',
-            command=self._start_hotkey_capture,
+            command=lambda: self._start_hotkey_capture(self._hotkey_var, self._hotkey_capture_btn),
         )
         self._hotkey_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 20))
         row += 1
+
+        # 歷史快捷鍵 1~5
+        add_label('歷史快捷鍵 1~5')
+        row += 1
+
+        ctk.CTkLabel(
+            scroll, text='點擊按鈕後，按下想要的組合鍵（Esc 取消）',
+            font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
+        ).grid(row=row, column=0, sticky='w', pady=(0, 6))
+        row += 1
+
+        history_hotkeys_cfg = self._cfg.get(
+            'history_hotkeys',
+            ['alt+shift+1', 'alt+shift+2', 'alt+shift+3', 'alt+shift+4', 'alt+shift+5'],
+        )
+        self._history_hotkey_vars: list[ctk.StringVar] = []
+        self._history_hotkey_btns: list[ctk.CTkButton] = []
+        for i in range(5):
+            hk_row_frame = ctk.CTkFrame(scroll, fg_color='transparent')
+            hk_row_frame.grid(row=row, column=0, sticky='ew', pady=(0, 6))
+            hk_row_frame.grid_columnconfigure(1, weight=1)
+            row += 1
+
+            ctk.CTkLabel(
+                hk_row_frame, text=f'記憶 {i + 1}',
+                font=ctk.CTkFont(family=font_family, size=13),
+                text_color='#A1A1AA', width=56, anchor='w',
+            ).grid(row=0, column=0, padx=(0, 8))
+
+            hk = history_hotkeys_cfg[i] if i < len(history_hotkeys_cfg) else f'alt+shift+{i + 1}'
+            var = ctk.StringVar(value=hk)
+            self._history_hotkey_vars.append(var)
+
+            btn = ctk.CTkButton(
+                hk_row_frame,
+                text=hk.upper(),
+                height=36,
+                corner_radius=8,
+                fg_color='#27272A', hover_color='#3F3F46',
+                border_width=1, border_color='#3F3F46',
+                font=ctk.CTkFont(family=font_family, size=13, weight='bold'),
+                text_color='#F4F4F5',
+                command=lambda v=var: None,  # placeholder，configure 後才正確綁定
+            )
+            btn.configure(command=lambda v=var, b=btn: self._start_hotkey_capture(v, b))
+            btn.grid(row=0, column=1, sticky='ew')
+            self._history_hotkey_btns.append(btn)
 
         # 開機啟動
         add_label('開機時自動啟動')
@@ -368,9 +415,11 @@ class App(ctk.CTk):
         'left windows': 'windows', 'right windows': 'windows',
     }
 
-    def _start_hotkey_capture(self):
-        """進入快捷鍵捕捉模式，用 keyboard.hook 追蹤按鍵組合"""
-        self._hotkey_capture_btn.configure(
+    def _start_hotkey_capture(self, var: ctk.StringVar, btn: ctk.CTkButton):
+        """進入快捷鍵捕捉模式，用 keyboard.hook 追蹤按鍵組合（var/btn 為目標輸入框與按鈕）"""
+        self._capture_var = var
+        self._capture_btn = btn
+        btn.configure(
             text='請按下組合鍵…',
             fg_color='#1E3A5F', border_color='#2563EB', text_color='#93C5FD',
         )
@@ -409,8 +458,8 @@ class App(ctk.CTk):
             keyboard.unhook_all()
         except Exception:
             pass
-        self._hotkey_var.set(hotkey)
-        self._hotkey_capture_btn.configure(
+        self._capture_var.set(hotkey)
+        self._capture_btn.configure(
             text=hotkey.upper(),
             fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
         )
@@ -421,8 +470,8 @@ class App(ctk.CTk):
             keyboard.unhook_all()
         except Exception:
             pass
-        hk = self._hotkey_var.get()
-        self._hotkey_capture_btn.configure(
+        hk = self._capture_var.get()
+        self._capture_btn.configure(
             text=hk.upper(),
             fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
         )
@@ -433,6 +482,7 @@ class App(ctk.CTk):
             'apiKey': self._api_key_var.get().strip(),
             'model': self._model_var.get(),
             'hotkey': self._hotkey_var.get().strip().lower(),
+            'history_hotkeys': [v.get().strip().lower() for v in self._history_hotkey_vars],
             'startup': self._startup_var.get(),
         }
         settings.save(new_cfg)
@@ -658,14 +708,19 @@ class App(ctk.CTk):
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
 
-        # Alt+Shift+1~5：貼上記憶 1~5
+        # 歷史快捷鍵 1~5：貼上對應記憶
+        _default_hks = ['alt+shift+1', 'alt+shift+2', 'alt+shift+3', 'alt+shift+4', 'alt+shift+5']
+        history_hotkeys = self._cfg.get('history_hotkeys', _default_hks)
         for i in range(5):
             idx = i
+            hk = history_hotkeys[i] if i < len(history_hotkeys) else _default_hks[i]
+            if not hk:
+                continue
             try:
-                keyboard.add_hotkey(f'alt+shift+{i + 1}', lambda idx=idx: self.after(0, self._paste_history, idx))
+                keyboard.add_hotkey(hk, lambda idx=idx: self.after(0, self._paste_history, idx))
             except Exception as e:
-                _debug_print(f'[main][{now_str()}] ❌ 記憶快捷鍵 alt+shift+{i + 1} 註冊失敗: {e}')
-        _debug_print(f'[main][{now_str()}] ✅ 記憶快捷鍵 Alt+Shift+1~5 已註冊')
+                _debug_print(f'[main][{now_str()}] ❌ 記憶快捷鍵 {hk} 註冊失敗: {e}')
+        _debug_print(f'[main][{now_str()}] ✅ 記憶快捷鍵 1~5 已註冊')
 
     def _paste_history(self, idx: int):
         """用 Alt+Shift+1~5 貼上對應記憶"""
