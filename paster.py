@@ -1,5 +1,5 @@
 # 功能：自動貼上
-# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；游標在文字最後面時自動補句號
+# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；游標在文字最後面時自動補句號或逗號（由 end_prefix 決定）
 # 依賴：keyboard, uiautomation, ctypes, datetime
 # 偵測原理：uiautomation 讀取焦點控件的文字和游標位置，零鍵盤操作
 # 優化：持久化 paste worker thread（COM 只初始化一次）+ ctypes clipboard（thread-safe）
@@ -180,15 +180,15 @@ def _consume_prefetch(max_age: float = 10.0):
         return at_end
 
 
-def _execute_paste(text: str, delay_ms: int, t_received: float) -> None:
-    """在持久化 worker thread 內執行，COM 已預先初始化"""
+def _execute_paste(text: str, delay_ms: int, t_received: float, end_prefix: str = '。') -> None:
+    """在持久化 worker thread 內執行，COM 已預先初始化；end_prefix：游標在文字最後時加在辨識內容前的符號（句號或逗號）"""
     prefetched = _consume_prefetch()
 
     if prefetched is not None:
         at_end = prefetched
         if delay_ms > 0:
             time.sleep(delay_ms / 1000)
-        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end} (prefetched), final={repr(text[:40])}')
+        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end} (prefetched), prefix={repr(end_prefix)}, final={repr(text[:40])}')
     else:
         t0 = time.perf_counter()
         at_end = _is_cursor_at_end()
@@ -196,9 +196,9 @@ def _execute_paste(text: str, delay_ms: int, t_received: float) -> None:
         remaining = delay_ms - elapsed_ms
         if remaining > 0:
             time.sleep(remaining / 1000)
-        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, uia={elapsed_ms:.0f}ms, final={repr(text[:40])}')
+        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, prefix={repr(end_prefix)}, uia={elapsed_ms:.0f}ms, final={repr(text[:40])}')
 
-    final_text = ('。' + text) if at_end else text
+    final_text = (end_prefix + text) if at_end else text
 
     _set_clipboard_ctypes(final_text)
     keyboard.send('ctrl+v')
@@ -216,8 +216,8 @@ def _paste_worker() -> None:
             job = _paste_queue.get()
             if job is None:
                 break
-            text, delay_ms, t_received = job
-            _execute_paste(text, delay_ms, t_received)
+            text, delay_ms, t_received, end_prefix = job
+            _execute_paste(text, delay_ms, t_received, end_prefix)
     finally:
         comtypes.CoUninitialize()
 
@@ -227,12 +227,13 @@ _worker_thread = threading.Thread(target=_paste_worker, daemon=True, name='Paste
 _worker_thread.start()
 
 
-def paste_text(text: str, delay_ms: int = 50, t_received: float = 0.0) -> None:
+def paste_text(text: str, delay_ms: int = 50, t_received: float = 0.0, end_prefix: str = '。') -> None:
     """
     將貼上工作推入 queue，由持久化 worker thread 執行（thread-safe，可從任意執行緒呼叫）
     delay_ms：貼上前最短等待時間（讓焦點切回前景視窗）
     t_received：API 回傳瞬間的 perf_counter，用於計算收到→貼上耗時
+    end_prefix：游標在文字最後時加在辨識內容前的符號（預設句號。，可改為逗號，）
     """
     if not text:
         return
-    _paste_queue.put((text, delay_ms, t_received))
+    _paste_queue.put((text, delay_ms, t_received, end_prefix))

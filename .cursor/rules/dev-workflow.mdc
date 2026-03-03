@@ -43,3 +43,9 @@ Get-Content "<terminals 資料夾>/<Shell ID>.txt" -Tail 10
 
 - 使用 PowerShell，不使用 `&&`
 - 不要用 `Stop-Process + Start-Sleep`，太慢
+
+## 程式碼品質
+
+- 若有 linter 紅線（型別錯誤、未定義變數等），**立即修正，不需等使用者要求**。
+- PIL / Pillow 的 `color` 參數型別問題，統一補上 `# type: ignore[arg-type]`。
+- 其他無法根本修正的型別誤報，補上對應的 `# type: ignore[...]` 標註。

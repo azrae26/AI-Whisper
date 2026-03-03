@@ -10,6 +10,31 @@ from opencc import OpenCC
 
 _s2t = OpenCC('s2t')
 
+# Whisper 模型有時輸出罕用異體字，在此統一校正
+_POST_CORRECTIONS: dict[str, str] = {
+    '纔': '才',
+    '裏': '裡',
+    # 臺 → 台（以詞為單位，避免罕見情況誤換）
+    '臺灣': '台灣',
+    '臺積電': '台積電',
+    '臺北': '台北',
+    '臺中': '台中',
+    '臺南': '台南',
+    '臺東': '台東',
+    '臺西': '台西',
+    '臺大': '台大',
+    '臺科大': '台科大',
+    '臺師大': '台師大',
+    '臺幣': '台幣',
+    '舞臺': '舞台',
+    '平臺': '平台',
+    '講臺': '講台',
+    '陽臺': '陽台',
+    '臺階': '台階',
+    '臺詞': '台詞',
+    '臺燈': '台燈',
+}
+
 SUPPORTED_MODELS = [
     'gpt-4o-transcribe',
     'gpt-4o-mini-transcribe',
@@ -36,4 +61,7 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
     )
     print(f'[transcriber][{__import__("datetime").datetime.now().strftime("%H:%M:%S")}] ⏱️ API 耗時: {time.perf_counter() - _t0:.2f}s', flush=True)
 
-    return _s2t.convert(response.text.strip())
+    text = _s2t.convert(response.text.strip())
+    for wrong, correct in _POST_CORRECTIONS.items():
+        text = text.replace(wrong, correct)
+    return text

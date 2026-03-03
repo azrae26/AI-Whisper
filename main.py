@@ -94,6 +94,7 @@ class App(ctk.CTk):
         # 狀態
         self._state = 'idle'  # idle | recording | processing
         self._page = 'main'   # main | settings
+        self._paste_prefix = '。'  # 游標在文字最後時加在辨識內容前的符號（句號/逗號，由快捷鍵決定）
         self._anim_dots = 0
         self._anim_job = None
         self._history: list[str] = []  # 最近 10 組辨識結果
@@ -145,7 +146,7 @@ class App(ctk.CTk):
         """用 PIL 畫左箭頭 chevron，回傳 RGBA Image"""
         s = size * scale
         sw = max(2, round(stroke * scale))
-        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))  # type: ignore[arg-type]
         d = ImageDraw.Draw(img)
         c = tuple(int(color[i:i+2], 16) for i in (1, 3, 5)) + (255,)  # type: ignore[arg-type]
 
@@ -341,12 +342,12 @@ class App(ctk.CTk):
             progress_color='#2563EB'
         ).pack(side='left')
 
-        # ── 2. 全域快捷鍵
-        add_label('全域快捷鍵')
+        # ── 2. 識別快捷鍵（自動加句號）
+        add_label('識別快捷鍵（自動加句號）')
         row += 1
 
         ctk.CTkLabel(
-            scroll, text='點擊按鈕後，按下想要的組合鍵（Esc 取消）',
+            scroll, text='辨識貼上時，游標在文字最後會加句號；點擊按鈕可自訂（Esc 取消）',
             font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
         ).grid(row=row, column=0, sticky='w', pady=(0, 6))
         row += 1
@@ -363,11 +364,36 @@ class App(ctk.CTk):
             text_color='#F4F4F5',
             command=lambda: self._start_hotkey_capture(self._hotkey_var, self._hotkey_capture_btn),
         )
-        self._hotkey_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        self._hotkey_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 6))
         row += 1
 
-        # ── 3. 歷史快捷鍵 1~5
-        add_label('歷史快捷鍵 1~5')
+        # ── 2b. 識別快捷鍵（自動加逗號）
+        add_label('識別快捷鍵（自動加逗號）')
+        row += 1
+
+        ctk.CTkLabel(
+            scroll, text='辨識貼上時，游標在文字最後會加逗號；點擊按鈕可自訂（Esc 取消）',
+            font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
+        ).grid(row=row, column=0, sticky='w', pady=(0, 6))
+        row += 1
+
+        self._hotkey_comma_var = ctk.StringVar(value=self._cfg.get('hotkey_comma', 'insert'))
+        self._hotkey_comma_capture_btn = ctk.CTkButton(
+            scroll,
+            text=self._cfg.get('hotkey_comma', 'insert').upper(),
+            height=40,
+            corner_radius=8,
+            fg_color='#27272A', hover_color='#3F3F46',
+            border_width=1, border_color='#3F3F46',
+            font=ctk.CTkFont(family=font_family, size=15, weight='bold'),
+            text_color='#F4F4F5',
+            command=lambda: self._start_hotkey_capture(self._hotkey_comma_var, self._hotkey_comma_capture_btn),
+        )
+        self._hotkey_comma_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        row += 1
+
+        # ── 3. 歷史識別快捷鍵
+        add_label('歷史識別快捷鍵')
         row += 1
 
         ctk.CTkLabel(
@@ -565,6 +591,7 @@ class App(ctk.CTk):
             'apiKey': self._api_key_var.get().strip(),
             'model': self._model_var.get(),
             'hotkey': self._hotkey_var.get().strip().lower(),
+            'hotkey_comma': self._hotkey_comma_var.get().strip().lower(),
             'history_hotkeys': [v.get().strip().lower() for v in self._history_hotkey_vars],
             'startup': self._startup_var.get(),
         }
@@ -576,8 +603,10 @@ class App(ctk.CTk):
 
     # ── 錄音控制 ──────────────────────────────────────────────────────────────
 
-    def _toggle_recording(self):
+    def _toggle_recording(self, paste_prefix: str = '。'):
+        """paste_prefix：游標在文字最後時加在辨識內容前的符號（句號或逗號），由快捷鍵決定"""
         if self._state == 'idle':
+            self._paste_prefix = paste_prefix
             self._start_recording()
         elif self._state == 'recording':
             self._stop_recording()
@@ -688,7 +717,7 @@ class App(ctk.CTk):
             text_clean = text.rstrip('。')
             _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text_clean}"')
             if text_clean:
-                paster.paste_text(text_clean, delay_ms=30, t_received=t_received)
+                paster.paste_text(text_clean, delay_ms=30, t_received=t_received, end_prefix=self._paste_prefix)
             self.after(0, lambda: self._on_segment_done(text_clean))
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 分段辨識失敗: {e}')
@@ -716,7 +745,7 @@ class App(ctk.CTk):
             text_clean = text.rstrip('。')
             _debug_print(f'[main][{now_str()}] ✅ 辨識完成: "{text_clean}"')
             if text_clean:
-                paster.paste_text(text_clean, t_received=t_received)
+                paster.paste_text(text_clean, t_received=t_received, end_prefix=self._paste_prefix)
             self.after(0, lambda: self._on_transcribe_done(text_clean))
         except Exception as e:
             err_msg = str(e)
@@ -865,7 +894,8 @@ class App(ctk.CTk):
 
     def _hotkey_display(self) -> str:
         hk = self._cfg.get('hotkey', 'alt+`')
-        return f'快捷鍵：{hk.upper()}'
+        hk_comma = self._cfg.get('hotkey_comma', 'insert')
+        return f'快捷鍵：{hk.upper()}（句號） / {hk_comma.upper()}（逗號）'
 
     # ── 快捷鍵 ────────────────────────────────────────────────────────────────
 
@@ -877,13 +907,15 @@ class App(ctk.CTk):
             pass
 
         hotkey = self._cfg.get('hotkey', 'alt+`')
+        hotkey_comma = self._cfg.get('hotkey_comma', 'insert')
         try:
-            keyboard.add_hotkey(hotkey, lambda: self.after(0, self._toggle_recording))  # type: ignore[arg-type]
-            _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey} 已註冊')
+            keyboard.add_hotkey(hotkey, lambda: self.after(0, lambda: self._toggle_recording('。')))  # type: ignore[arg-type]
+            keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
+            _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey}（句號）、{hotkey_comma}（逗號）已註冊')
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
 
-        # 歷史快捷鍵 1~5：用 Win32 RegisterHotKey 確保按鍵完全攔截不穿透
+        # 歷史識別快捷鍵：用 Win32 RegisterHotKey 確保按鍵完全攔截不穿透
         self._register_history_hotkeys()
 
     # ── Win32 RegisterHotKey（記憶快捷鍵）────────────────────────────────────
