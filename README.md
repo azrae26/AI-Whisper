@@ -15,7 +15,7 @@ python main.py
 3. 設定完成後按「儲存設定」
 
 ## 快捷鍵
-- 預設：`Ctrl+Shift+H`（可在設定中自訂）
+- 預設：`Alt+\``（可在設定中自訂）
 - 第一次按：開始錄音
 - 第二次按：停止並辨識
 - 辨識完成後文字自動貼到當前游標位置
@@ -28,17 +28,19 @@ python main.py
 |------|------|
 | API Key | OpenAI API Key，存在本機 config.json（exe 同目錄；開發時為 script 同目錄） |
 | 辨識模型 | `gpt-4o-transcribe`（最強）/ `whisper-1`（舊版相容） |
-| 全域快捷鍵 | 格式如 `ctrl+shift+h` |
+| 全域快捷鍵 | 格式如 `alt+\`` |
 | 開機啟動 | 寫入 Windows 登錄機碼自動啟動 |
 
 ## 打包成 .exe
 
 ```bash
 python -m pip install pyinstaller
-python -m PyInstaller --onefile --windowed --icon=assets/icon.ico --name="AI Whisper" main.py
+python -m PyInstaller --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --version-file version_info.txt main.py
 ```
 
-產出位於 `dist/AI Whisper.exe`，分享時附上 `assets/` 資料夾即可。首次執行後，`config.json` 會產生在 exe 同目錄，設定可持久保存。
+產出位於 `dist/AI Whisper/` 資料夾，將整個資料夾壓成 zip 分發即可。`config.json` 會產生在 exe 同目錄，設定可持久保存。
+
+> 使用 `--onedir` 而非 `--onefile`，避免防毒軟體誤報（onefile 的自解壓行為類似惡意程式殼）。
 
 ## 依賴套件
 

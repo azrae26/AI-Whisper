@@ -25,10 +25,10 @@ APP_NAME = 'AIWhisper'
 
 DEFAULTS = {
     'apiKey': '',
-    'hotkey': 'ctrl+shift+h',
+    'hotkey': 'alt+`',
     'history_hotkeys': ['alt+shift+1', 'alt+shift+2', 'alt+shift+3', 'alt+shift+4', 'alt+shift+5'],
     'model': 'gpt-4o-transcribe',
-    'startup': False,
+    'startup': True,
 }
 
 

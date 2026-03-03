@@ -36,8 +36,12 @@ import paster
 import waveform
 
 # ── 路徑 ─────────────────────────────────────────────────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ICON_PATH = os.path.join(BASE_DIR, 'assets', 'icon_256.png')
+# 打包後 assets 在 _MEIPASS 暫存目錄內；開發時在 script 同目錄
+if getattr(sys, '_MEIPASS', None):
+    ASSETS_DIR = os.path.join(sys._MEIPASS, 'assets')
+else:
+    ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
+ICON_PATH = os.path.join(ASSETS_DIR, 'icon_256.png')
 
 # ── 全域狀態 ──────────────────────────────────────────────────────────────────
 recorder = rec_module.Recorder()
@@ -108,7 +112,7 @@ class App(ctk.CTk):
         if not os.path.exists(path):
             return
         try:
-            ico_path = os.path.join(BASE_DIR, 'assets', 'icon.ico')
+            ico_path = os.path.join(ASSETS_DIR, 'icon.ico')
             if not os.path.exists(ico_path):
                 src = Image.open(path)
                 src.save(ico_path, format='ICO', sizes=[(256, 256), (64, 64), (48, 48), (32, 32), (16, 16)])
@@ -263,6 +267,16 @@ class App(ctk.CTk):
             text_color='#F4F4F5'
         ).grid(row=0, column=1, pady=14, sticky='w', padx=4)
 
+        ctk.CTkButton(
+            top, text='完成', width=68, height=34,
+            corner_radius=8,
+            fg_color='#27272A', hover_color='#3F3F46',
+            border_width=1, border_color='#3F3F46',
+            font=ctk.CTkFont(family=font_family, size=13, weight='bold'),
+            text_color='#F4F4F5',
+            command=self._show_main,
+        ).grid(row=0, column=2, padx=12, pady=10)
+
         # ── 設定內容捲動區
         scroll = ctk.CTkScrollableFrame(
             frame, fg_color='transparent',
@@ -278,6 +292,24 @@ class App(ctk.CTk):
             lbl = ctk.CTkLabel(scroll, text=text, font=ctk.CTkFont(family=font_family, size=14, weight='bold'),
                                text_color='#D4D4D8')
             lbl.grid(row=row, column=0, sticky='w', pady=(0, 6))
+
+        # 開機啟動（第一順位）
+        add_label('開機時自動啟動')
+        row += 1
+
+        startup_frame = ctk.CTkFrame(scroll, fg_color='transparent')
+        startup_frame.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        row += 1
+
+        self._startup_var = ctk.BooleanVar(value=settings.is_startup_enabled())
+        self._startup_var.trace_add('write', lambda *_: self._auto_save())
+        ctk.CTkSwitch(
+            startup_frame,
+            text='',
+            variable=self._startup_var,
+            onvalue=True, offvalue=False,
+            progress_color='#2563EB'
+        ).pack(side='left')
 
         # API Key
         add_label('OpenAI API Key')
@@ -296,6 +328,7 @@ class App(ctk.CTk):
             fg_color='#27272A', border_color='#3F3F46'
         )
         self._api_key_entry.grid(row=0, column=0, sticky='ew')
+        self._api_key_entry.bind('<FocusOut>', lambda e: self._auto_save())
 
         self._show_key_btn = ctk.CTkButton(
             key_frame, text='👁', width=44, height=40,
@@ -311,6 +344,7 @@ class App(ctk.CTk):
         row += 1
 
         self._model_var = ctk.StringVar(value=self._cfg.get('model', 'gpt-4o-transcribe'))
+        self._model_var.trace_add('write', lambda *_: self._auto_save())
         ctk.CTkOptionMenu(
             scroll,
             values=transcriber.SUPPORTED_MODELS,
@@ -334,10 +368,10 @@ class App(ctk.CTk):
         ).grid(row=row, column=0, sticky='w', pady=(0, 6))
         row += 1
 
-        self._hotkey_var = ctk.StringVar(value=self._cfg.get('hotkey', 'ctrl+shift+h'))
+        self._hotkey_var = ctk.StringVar(value=self._cfg.get('hotkey', 'alt+`'))
         self._hotkey_capture_btn = ctk.CTkButton(
             scroll,
-            text=self._cfg.get('hotkey', 'ctrl+shift+h').upper(),
+            text=self._cfg.get('hotkey', 'alt+`').upper(),
             height=40,
             corner_radius=8,
             fg_color='#27272A', hover_color='#3F3F46',
@@ -396,33 +430,6 @@ class App(ctk.CTk):
             btn.grid(row=0, column=1, sticky='ew')
             self._history_hotkey_btns.append(btn)
 
-        # 開機啟動
-        add_label('開機時自動啟動')
-        row += 1
-
-        startup_frame = ctk.CTkFrame(scroll, fg_color='transparent')
-        startup_frame.grid(row=row, column=0, sticky='ew', pady=(0, 32))
-        row += 1
-
-        self._startup_var = ctk.BooleanVar(value=settings.is_startup_enabled())
-        ctk.CTkSwitch(
-            startup_frame,
-            text='',
-            variable=self._startup_var,
-            onvalue=True, offvalue=False,
-            progress_color='#2563EB'
-        ).pack(side='left')
-
-        # 儲存按鈕
-        ctk.CTkButton(
-            scroll,
-            text='儲存設定',
-            height=44,
-            corner_radius=8,
-            fg_color='#2563EB', hover_color='#1D4ED8',
-            font=ctk.CTkFont(family=font_family, size=15, weight='bold'),
-            command=self._save_settings,
-        ).grid(row=row, column=0, sticky='ew', pady=(0, 12))
 
         return frame
 
@@ -504,7 +511,7 @@ class App(ctk.CTk):
             text=hotkey.upper(),
             fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
         )
-        self._register_hotkey()
+        self._auto_save()
 
     def _finish_capture_cancel(self):
         try:
@@ -516,9 +523,10 @@ class App(ctk.CTk):
             text=hk.upper(),
             fg_color='#27272A', border_color='#3F3F46', text_color='#F4F4F5',
         )
-        self._register_hotkey()
+        self._auto_save()
 
-    def _save_settings(self):
+    def _auto_save(self):
+        """設定變動時靜默自動儲存，不跳頁、不顯示訊息"""
         new_cfg = {
             'apiKey': self._api_key_var.get().strip(),
             'model': self._model_var.get(),
@@ -529,14 +537,8 @@ class App(ctk.CTk):
         settings.save(new_cfg)
         settings.set_startup(new_cfg['startup'])
         self._cfg = settings.get()
-
-        # 重新註冊快捷鍵
         self._register_hotkey()
         self._hotkey_label.configure(text=self._hotkey_display())
-
-        self._show_main()
-        self._set_status('設定已儲存 ✓', '#10B981')
-        self.after(2000, lambda: self._set_status('等待中', '#A1A1AA'))
 
     # ── 錄音控制 ──────────────────────────────────────────────────────────────
 
@@ -796,7 +798,7 @@ class App(ctk.CTk):
             self.after(1200, lambda b=btn: b.configure(text='複製'))
 
     def _hotkey_display(self) -> str:
-        hk = self._cfg.get('hotkey', 'ctrl+shift+h')
+        hk = self._cfg.get('hotkey', 'alt+`')
         return f'快捷鍵：{hk.upper()}'
 
     # ── 快捷鍵 ────────────────────────────────────────────────────────────────
@@ -808,7 +810,7 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-        hotkey = self._cfg.get('hotkey', 'ctrl+shift+h')
+        hotkey = self._cfg.get('hotkey', 'alt+`')
         try:
             keyboard.add_hotkey(hotkey, lambda: self.after(0, self._toggle_recording))  # type: ignore[arg-type]
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey} 已註冊')
