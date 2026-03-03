@@ -1,5 +1,5 @@
 # 功能：語音辨識
-# 職責：將 WAV bytes 送至 OpenAI Audio Transcriptions API，回傳繁體中文辨識文字
+# 職責：將 WAV bytes 送至 OpenAI Audio Transcriptions API，回傳繁體中文辨識文字（中英混合友好）
 # 依賴：openai, opencc
 
 import io
@@ -20,7 +20,7 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
     """
     呼叫 OpenAI Whisper API 辨識語音
     model 預設 gpt-4o-transcribe（最強），可改為 whisper-1 相容舊版
-    不指定 language，讓模型自動偵測中英混合
+    指定 language='zh' 避免短句被誤判為其他語系；中文夾英文單字仍可正確辨識
     """
     client = OpenAI(api_key=api_key)
 
@@ -29,5 +29,7 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
     response = client.audio.transcriptions.create(
         model=model,
         file=('audio.wav', audio_file, 'audio/wav'),
+        language='zh',
+        prompt='以下是繁體中文語音，內容可能夾雜英文單字。',
     )
     return _s2t.convert(response.text.strip())

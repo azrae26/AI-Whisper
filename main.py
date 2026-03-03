@@ -25,7 +25,7 @@ except Exception:
     pass
 
 import customtkinter as ctk
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 import pystray
 import keyboard
 
@@ -136,6 +136,32 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+    # ── 圖示繪製 ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _make_back_arrow(size: int = 20, color: str = '#A1A1AA', stroke: float = 2.2, scale: int = 2) -> Image.Image:
+        """用 PIL 畫左箭頭 chevron，回傳 RGBA Image"""
+        s = size * scale
+        sw = max(2, round(stroke * scale))
+        img = Image.new('RGBA', (s, s), (0, 0, 0, 0))
+        d = ImageDraw.Draw(img)
+        c = tuple(int(color[i:i+2], 16) for i in (1, 3, 5)) + (255,)  # type: ignore[arg-type]
+
+        # tip（左尖端），arm_top / arm_bot（右上/右下端點）
+        tip  = (round(s * 0.28), round(s * 0.50))
+        atop = (round(s * 0.68), round(s * 0.15))
+        abot = (round(s * 0.68), round(s * 0.85))
+
+        d.line([atop, tip], fill=c, width=sw)
+        d.line([tip,  abot], fill=c, width=sw)
+
+        # 圓頭端點
+        r = sw // 2
+        for x, y in [atop, tip, abot]:
+            d.ellipse([x - r, y - r, x + r, y + r], fill=c)
+
+        return img
+
     # ── UI 建構 ───────────────────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -176,7 +202,7 @@ class App(ctk.CTk):
         ctk.CTkButton(
             top, text='•••', width=40, height=40,
             fg_color='transparent', hover_color='#27272A',
-            font=ctk.CTkFont(family=font_family, size=16, weight='bold'), text_color='#71717A',
+            font=ctk.CTkFont(family=font_family, size=16, weight='bold'), text_color='#A1A1AA',
             command=self._show_settings
         ).place(relx=1.0, rely=0.5, anchor='e', x=-12)
 
@@ -255,34 +281,36 @@ class App(ctk.CTk):
         top.grid_columnconfigure(1, weight=1)
         top.grid_propagate(False)
 
+        _arrow_img = self._make_back_arrow(size=20, color='#A1A1AA', stroke=2.2, scale=2)
+        _arrow_ctk = ctk.CTkImage(light_image=_arrow_img, dark_image=_arrow_img, size=(20, 20))
         ctk.CTkButton(
-            top, text='←', width=40, height=40,
+            top, text='', image=_arrow_ctk, width=36, height=36,
             fg_color='transparent', hover_color='#27272A',
-            font=ctk.CTkFont(family=font_family, size=20), text_color='#A1A1AA',
             command=self._show_main,
-        ).grid(row=0, column=0, padx=12, pady=8)
+        ).grid(row=0, column=0, padx=(12, 2), pady=10)
 
         ctk.CTkLabel(
             top, text='設定', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
             text_color='#F4F4F5'
-        ).grid(row=0, column=1, pady=14, sticky='w', padx=4)
+        ).grid(row=0, column=1, pady=14, sticky='w', padx=(2, 0))
 
         ctk.CTkButton(
             top, text='完成', width=68, height=34,
             corner_radius=8,
-            fg_color='#27272A', hover_color='#3F3F46',
-            border_width=1, border_color='#3F3F46',
-            font=ctk.CTkFont(family=font_family, size=13, weight='bold'),
-            text_color='#F4F4F5',
+            fg_color='#6C63FF', hover_color='#5A52E0',
+            border_width=0,
+            font=ctk.CTkFont(family=font_family, size=15, weight='bold'),
+            text_color='#FFFFFF',
             command=self._show_main,
-        ).grid(row=0, column=2, padx=12, pady=10)
+        ).grid(row=0, column=2, padx=(4, 20), pady=10)
 
         # ── 設定內容捲動區
         scroll = ctk.CTkScrollableFrame(
             frame, fg_color='transparent',
             scrollbar_button_color='#121212', scrollbar_button_hover_color='#3F3F46',
         )
-        scroll.grid(row=1, column=0, sticky='nsew', padx=24, pady=16)
+        # padx 右側縮小以補償 CTkScrollableFrame 右側捲軸寬度，使左右視覺間距對稱
+        scroll.grid(row=1, column=0, sticky='nsew', padx=(20, 12), pady=16)
         frame.grid_rowconfigure(1, weight=1)
         scroll.grid_columnconfigure(0, weight=1)
 
@@ -293,7 +321,7 @@ class App(ctk.CTk):
                                text_color='#D4D4D8')
             lbl.grid(row=row, column=0, sticky='w', pady=(0, 6))
 
-        # 開機啟動（第一順位）
+        # ── 1. 開機啟動
         add_label('開機時自動啟動')
         row += 1
 
@@ -311,54 +339,7 @@ class App(ctk.CTk):
             progress_color='#2563EB'
         ).pack(side='left')
 
-        # API Key
-        add_label('OpenAI API Key')
-        row += 1
-
-        key_frame = ctk.CTkFrame(scroll, fg_color='transparent')
-        key_frame.grid(row=row, column=0, sticky='ew', pady=(0, 20))
-        key_frame.grid_columnconfigure(0, weight=1)
-        row += 1
-
-        self._api_key_var = ctk.StringVar(value=self._cfg.get('apiKey', ''))
-        self._api_key_entry = ctk.CTkEntry(
-            key_frame, textvariable=self._api_key_var,
-            show='•', placeholder_text='sk-...',
-            height=40, font=ctk.CTkFont(family=font_family, size=14),
-            fg_color='#27272A', border_color='#3F3F46'
-        )
-        self._api_key_entry.grid(row=0, column=0, sticky='ew')
-        self._api_key_entry.bind('<FocusOut>', lambda e: self._auto_save())
-
-        self._show_key_btn = ctk.CTkButton(
-            key_frame, text='👁', width=44, height=40,
-            fg_color='#3F3F46', hover_color='#52525B',
-            font=ctk.CTkFont(family=font_family, size=16),
-            command=self._toggle_key_visibility,
-        )
-        self._show_key_btn.grid(row=0, column=1, padx=(8, 0))
-        self._key_visible = False
-
-        # 辨識模型
-        add_label('辨識模型')
-        row += 1
-
-        self._model_var = ctk.StringVar(value=self._cfg.get('model', 'gpt-4o-transcribe'))
-        self._model_var.trace_add('write', lambda *_: self._auto_save())
-        ctk.CTkOptionMenu(
-            scroll,
-            values=transcriber.SUPPORTED_MODELS,
-            variable=self._model_var,
-            height=40,
-            font=ctk.CTkFont(family=font_family, size=14),
-            dropdown_font=ctk.CTkFont(family=font_family, size=13),
-            fg_color='#3F3F46',
-            button_color='#52525B',
-            button_hover_color='#71717A',
-        ).grid(row=row, column=0, sticky='ew', pady=(0, 20))
-        row += 1
-
-        # 全域快捷鍵
+        # ── 2. 全域快捷鍵
         add_label('全域快捷鍵')
         row += 1
 
@@ -383,7 +364,7 @@ class App(ctk.CTk):
         self._hotkey_capture_btn.grid(row=row, column=0, sticky='ew', pady=(0, 20))
         row += 1
 
-        # 歷史快捷鍵 1~5
+        # ── 3. 歷史快捷鍵 1~5
         add_label('歷史快捷鍵 1~5')
         row += 1
 
@@ -429,6 +410,57 @@ class App(ctk.CTk):
             btn.configure(command=lambda v=var, b=btn: self._start_hotkey_capture(v, b))
             btn.grid(row=0, column=1, sticky='ew')
             self._history_hotkey_btns.append(btn)
+
+        # 歷史快捷鍵區塊結束後補足與下一區塊的間距
+        ctk.CTkFrame(scroll, fg_color='transparent', height=14).grid(row=row, column=0, sticky='ew')
+        row += 1
+
+        # ── 4. API Key
+        add_label('OpenAI API Key')
+        row += 1
+
+        key_frame = ctk.CTkFrame(scroll, fg_color='transparent')
+        key_frame.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        key_frame.grid_columnconfigure(0, weight=1)
+        row += 1
+
+        self._api_key_var = ctk.StringVar(value=self._cfg.get('apiKey', ''))
+        self._api_key_entry = ctk.CTkEntry(
+            key_frame, textvariable=self._api_key_var,
+            show='•', placeholder_text='sk-...',
+            height=40, font=ctk.CTkFont(family=font_family, size=14),
+            fg_color='#27272A', border_color='#3F3F46'
+        )
+        self._api_key_entry.grid(row=0, column=0, sticky='ew')
+        self._api_key_entry.bind('<FocusOut>', lambda e: self._auto_save())
+
+        self._show_key_btn = ctk.CTkButton(
+            key_frame, text='👁', width=44, height=40,
+            fg_color='#3F3F46', hover_color='#52525B',
+            font=ctk.CTkFont(family=font_family, size=16),
+            command=self._toggle_key_visibility,
+        )
+        self._show_key_btn.grid(row=0, column=1, padx=(8, 0))
+        self._key_visible = False
+
+        # ── 5. 辨識模型
+        add_label('辨識模型')
+        row += 1
+
+        self._model_var = ctk.StringVar(value=self._cfg.get('model', 'gpt-4o-transcribe'))
+        self._model_var.trace_add('write', lambda *_: self._auto_save())
+        ctk.CTkOptionMenu(
+            scroll,
+            values=transcriber.SUPPORTED_MODELS,
+            variable=self._model_var,
+            height=40,
+            font=ctk.CTkFont(family=font_family, size=14),
+            dropdown_font=ctk.CTkFont(family=font_family, size=13),
+            fg_color='#3F3F46',
+            button_color='#52525B',
+            button_hover_color='#71717A',
+        ).grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        row += 1
 
 
         return frame
