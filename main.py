@@ -6,6 +6,7 @@ import ctypes
 import math
 import os
 import sys
+import queue
 import threading
 import time
 import datetime
@@ -625,6 +626,7 @@ class App(ctk.CTk):
             return
 
         _debug_print(f'[main][{now_str()}] ✅ 錄音完成，送出辨識')
+        paster.prefetch_cursor_position(len(wav_bytes))
         threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
 
     def _check_segment(self):
@@ -637,10 +639,40 @@ class App(ctk.CTk):
             wav_bytes = recorder.flush_segment()
             if wav_bytes:
                 _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
+                paster.prefetch_cursor_position(len(wav_bytes))
                 threading.Thread(
                     target=self._run_segment_transcribe, args=(wav_bytes,), daemon=True
                 ).start()
         self._segment_check_job = self.after(200, self._check_segment)
+
+    @staticmethod
+    def _transcribe_with_retry(wav_bytes: bytes, api_key: str, model: str,
+                               timeout: float = 2.5) -> str:
+        """呼叫 API，超過 timeout 秒未回應則並行重試，取先回來的結果"""
+        result_q: queue.Queue = queue.Queue()
+
+        def _call(attempt: int):
+            try:
+                text = transcriber.transcribe(wav_bytes, api_key=api_key, model=model)
+                result_q.put(('ok', text, attempt))
+            except Exception as e:
+                result_q.put(('error', str(e), attempt))
+
+        threading.Thread(target=_call, args=(1,), daemon=True).start()
+
+        try:
+            status, payload, attempt = result_q.get(timeout=timeout)
+        except queue.Empty:
+            _debug_print(f'[main][{now_str()}] ⚠️ API 超過 {timeout}s 未回應，重試中…')
+            threading.Thread(target=_call, args=(2,), daemon=True).start()
+            status, payload, attempt = result_q.get()
+
+        if attempt == 2:
+            _debug_print(f'[main][{now_str()}] 🔄 使用重試結果')
+
+        if status == 'ok':
+            return payload
+        raise Exception(payload)
 
     def _run_segment_transcribe(self, wav_bytes: bytes):
         """分段辨識 thread：辨識完成後貼上並加入歷史，不影響錄音狀態"""
@@ -650,19 +682,21 @@ class App(ctk.CTk):
         if not api_key:
             return
         try:
-            text = transcriber.transcribe(wav_bytes, api_key=api_key, model=model)
-            _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text}"')
-            self.after(0, lambda: self._on_segment_done(text))
+            text = self._transcribe_with_retry(wav_bytes, api_key, model)
+            t_received = time.perf_counter()
+            text_clean = text.rstrip('。')
+            _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text_clean}"')
+            if text_clean:
+                paster.paste_text(text_clean, delay_ms=30, t_received=t_received)
+            self.after(0, lambda: self._on_segment_done(text_clean))
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 分段辨識失敗: {e}')
 
     def _on_segment_done(self, text: str):
-        """分段辨識完成：貼上結果並加入歷史，保持錄音中狀態不重置"""
-        text = text.rstrip('。')
+        """分段辨識完成 UI 更新：顯示結果並加入歷史，保持錄音中狀態不重置"""
         if not text:
             return
         self._set_result(text)
-        paster.paste_text(text, delay_ms=30)
 
     def _run_transcribe(self, wav_bytes: bytes):
         cfg = settings.get()
@@ -676,25 +710,24 @@ class App(ctk.CTk):
             return
 
         try:
-            text = transcriber.transcribe(wav_bytes, api_key=api_key, model=model)
-            _debug_print(f'[main][{now_str()}] ✅ 辨識完成: "{text}"')
-            self.after(0, lambda: self._on_transcribe_done(text))
+            text = self._transcribe_with_retry(wav_bytes, api_key, model)
+            t_received = time.perf_counter()
+            text_clean = text.rstrip('。')
+            _debug_print(f'[main][{now_str()}] ✅ 辨識完成: "{text_clean}"')
+            if text_clean:
+                paster.paste_text(text_clean, t_received=t_received)
+            self.after(0, lambda: self._on_transcribe_done(text_clean))
         except Exception as e:
             err_msg = str(e)
             _debug_print(f'[main][{now_str()}] ❌ 辨識失敗: {err_msg}')
             self.after(0, lambda: self._on_transcribe_error(err_msg))
 
     def _on_transcribe_done(self, text: str):
-        # 移除尾部句號（辨識結果常自動帶句號，貼上時多餘）
-        text = text.rstrip('。')
-
+        # UI 更新：重置狀態、顯示辨識結果
         self._reset_idle()
         self._set_result(text)
         self._set_status('辨識完成 ✓', '#10B981')
         self.after(2000, lambda: self._set_status('等待中', '#A1A1AA'))
-
-        # 自動貼到游標處
-        paster.paste_text(text)
 
     def _on_transcribe_error(self, err_msg: str):
         self._reset_idle()

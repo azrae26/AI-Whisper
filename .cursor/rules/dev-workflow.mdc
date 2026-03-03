@@ -10,16 +10,36 @@ globs: "**/*.py"
 以下兩種情況都必須執行重啟：
 
 1. 每次修改完 .py 程式碼後，必須自動重啟 AI Whisper 讓改動生效，不需要等使用者要求。
-2. 使用者傳送「重啟」（單字或含「重啟」語意的訊息），立即執行重啟。
+2. 使用者傳送「重啟」、「restart」、「重新啟動」，立即執行重啟。
 
-## 快速啟動命令
+## 重啟流程
 
-重啟 AI Whisper 時使用以下命令（不要用 Stop-Process + Start-Sleep，太慢）：
+### Step 1：終止舊程序並重啟（block_until_ms: 0 立刻背景化）
 
 ```powershell
-taskkill /F /IM python.exe 2>$null; py main.py
+taskkill /F /IM python.exe 2>$null; Start-Sleep -Seconds 1; py -u main.py
 ```
 
-- 使用 Shell tool 的 `working_directory` 參數指向 workspace 根目錄
-- 設定 `block_until_ms: 0` 立即背景執行
-- 不要寫死磁碟代號（家裡 F:\、公司 D:\）
+**重要參數：**
+- `block_until_ms: 0`：立刻將指令丟到背景，不等待程序結束
+- `-u`：Python unbuffered mode，確保 LOG 即時輸出
+- `working_directory`：指向 workspace 根目錄，不要寫死磁碟代號（家裡 F:\、公司 D:\）
+
+### Step 2：等待 3 秒後確認啟動成功
+
+讀取背景 terminal 檔的最後 10 行，確認有出現 `[main][HH:MM:SS]` 啟動訊息。
+
+```powershell
+Start-Sleep -Seconds 3
+Get-Content "<terminals 資料夾>/<Shell ID>.txt" -Tail 10
+```
+
+## LOG 監控
+
+- 輸出串流到 `terminals/<Shell ID>.txt`，後續可用 `Get-Content ... -Tail N` 讀取 LOG
+- 若使用者說「幫我看 LOG」、「看 log」，直接讀取該 terminal 檔即可
+
+## 注意事項
+
+- 使用 PowerShell，不使用 `&&`
+- 不要用 `Stop-Process + Start-Sleep`，太慢

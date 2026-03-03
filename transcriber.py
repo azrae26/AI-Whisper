@@ -3,6 +3,7 @@
 # 依賴：openai, opencc
 
 import io
+import time
 
 from openai import OpenAI
 from opencc import OpenCC
@@ -26,10 +27,13 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
 
     audio_file = io.BytesIO(wav_bytes)
 
+    _t0 = time.perf_counter()
     response = client.audio.transcriptions.create(
         model=model,
         file=('audio.wav', audio_file, 'audio/wav'),
         language='zh',
         prompt='以下是繁體中文語音，內容可能夾雜英文單字。',
     )
+    print(f'[transcriber][{__import__("datetime").datetime.now().strftime("%H:%M:%S")}] ⏱️ API 耗時: {time.perf_counter() - _t0:.2f}s', flush=True)
+
     return _s2t.convert(response.text.strip())
