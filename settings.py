@@ -1,5 +1,5 @@
 # 功能：設定管理
-# 職責：讀寫 config.json（API Key、快捷鍵、模型、開機啟動、視窗位置）
+# 職責：讀寫 config.json（API Key、錄音/貼上快捷鍵、模型、開機啟動、視窗位置）
 # 依賴：json, os, winreg, sys
 
 import json
@@ -21,7 +21,12 @@ APP_NAME = 'AIWhisper'
 
 DEFAULTS = {
     'apiKey': '',
-    'hotkey': 'ctrl+shift+h',
+    'hotkey': 'pause',
+    'pasteHotkey1': 'alt+shift+1',
+    'pasteHotkey2': 'alt+shift+2',
+    'pasteHotkey3': 'alt+shift+3',
+    'pasteHotkey4': 'alt+shift+4',
+    'pasteHotkey5': 'alt+shift+5',
     'model': 'gpt-4o-transcribe',
     'startup': False,
 }
