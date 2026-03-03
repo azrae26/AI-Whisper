@@ -35,10 +35,10 @@ python main.py
 
 ```bash
 python -m pip install pyinstaller
-pyinstaller --onefile --windowed --icon=assets/icon.png --name=AIWhisper main.py
+python -m PyInstaller --onefile --windowed --icon=assets/icon.ico --name="AI Whisper" main.py
 ```
 
-產出位於 `dist/AIWhisper.exe`，分享時附上 `assets/` 資料夾即可。
+產出位於 `dist/AI Whisper.exe`，分享時附上 `assets/` 資料夾即可。
 
 ## 依賴套件
 
