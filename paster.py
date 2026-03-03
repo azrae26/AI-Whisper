@@ -18,6 +18,7 @@ except Exception:
     pass
 
 _tk_root = None
+_paste_lock = threading.Lock()  # 確保同時只有一個貼上操作，避免剪貼簿競爭
 
 
 def _now():
@@ -114,12 +115,12 @@ def paste_text(text: str, delay_ms: int = 50) -> None:
             final_text = ('。' + text) if at_end else text
             _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, uia={elapsed_ms:.0f}ms, final={repr(final_text[:40])}')
 
-            if _tk_root:
-                _tk_root.clipboard_clear()
-                _tk_root.clipboard_append(final_text)
-                _tk_root.update()
-
-            keyboard.send('ctrl+v')
+            with _paste_lock:
+                if _tk_root:
+                    _tk_root.clipboard_clear()
+                    _tk_root.clipboard_append(final_text)
+                    _tk_root.update()
+                keyboard.send('ctrl+v')
         finally:
             comtypes.CoUninitialize()
 

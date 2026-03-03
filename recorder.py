@@ -1,5 +1,5 @@
 # 功能：麥克風錄音
-# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式 VAD 與即時波形資料
+# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式 VAD、即時波形資料、自動分段送出
 # 依賴：sounddevice, numpy, wave, io, threading
 
 import io
@@ -29,6 +29,8 @@ VAD_FRAME_THRESHOLD = 300
 VAD_SPEECH_RATIO = 0.08
 # 最短有效錄音長度（秒），太短視為誤觸
 MIN_DURATION_SEC = 0.5
+# 靜音偵測閾值：waveform level（RMS/5000）低於此值視為靜音
+_SILENCE_LEVEL = 0.06
 
 
 def _has_speech(audio: np.ndarray) -> bool:
@@ -59,6 +61,10 @@ class Recorder:
         # 即時波形：儲存最近 N 個 RMS 值（0~1），供 UI 繪製波形
         self._waveform: list[float] = []
         self._wf_lock = threading.Lock()
+        # 分段辨識用：記錄本段累積樣本數、連續靜音 chunk 數、每 chunk 樣本數
+        self._segment_samples: int = 0
+        self._silence_chunks: int = 0
+        self._chunk_samples: int = 0
 
     def start(self) -> bool:
         """開始錄音，回傳是否成功"""
@@ -67,11 +73,18 @@ class Recorder:
                 return False
             self._frames = []
             self._waveform = []
+            self._segment_samples = 0
+            self._silence_chunks = 0
+            self._chunk_samples = 0
             self._recording = True
 
         def _callback(indata, frames, time, status):
             if self._recording:
                 self._frames.append(indata.copy())
+                chunk_len = len(indata)
+                # 記錄 chunk 大小（第一次才記，之後穩定不變）
+                if not self._chunk_samples:
+                    self._chunk_samples = chunk_len
                 # 即時波形：計算本 chunk 的 RMS 並正規化到 0~1
                 rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
                 level = min(1.0, rms / 5000)
@@ -79,6 +92,12 @@ class Recorder:
                     self._waveform.append(level)
                     if len(self._waveform) > 200:
                         self._waveform = self._waveform[-200:]
+                # 分段計數：累積樣本數、連續靜音重置
+                self._segment_samples += chunk_len
+                if level < _SILENCE_LEVEL:
+                    self._silence_chunks += 1
+                else:
+                    self._silence_chunks = 0
 
         try:
             self._stream = sd.InputStream(
@@ -141,6 +160,39 @@ class Recorder:
         """取得最近的波形資料（0~1 浮點陣列），供 UI 繪製"""
         with self._wf_lock:
             return self._waveform.copy()
+
+    def get_accumulated_seconds(self) -> float:
+        """回傳本段（上次 flush 後）已累積的錄音秒數"""
+        return self._segment_samples / SAMPLE_RATE
+
+    def get_silence_seconds(self) -> float:
+        """回傳尾端連續靜音的秒數（依 RMS 判斷）"""
+        chunk_sec = self._chunk_samples / SAMPLE_RATE if self._chunk_samples else 0.032
+        return self._silence_chunks * chunk_sec
+
+    def flush_segment(self) -> bytes | None:
+        """取出並清空目前已累積的音訊（不停止錄音），回傳 WAV bytes；無語音則回傳 None"""
+        with self._lock:
+            if not self._recording or not self._frames:
+                return None
+            frames = self._frames
+            self._frames = []
+            self._segment_samples = 0
+            # 保留 _silence_chunks 不重置，因為 flush 就是在靜音中觸發的
+
+        audio_data = np.concatenate(frames, axis=0)
+        duration = len(audio_data) / SAMPLE_RATE
+
+        if duration < MIN_DURATION_SEC:
+            _safe_print(f'[recorder][flush] 段落太短 ({duration:.2f}s)，略過')
+            return None
+
+        if not _has_speech(audio_data):
+            _safe_print('[recorder][flush] ❌ VAD 未偵測到語音，略過')
+            return None
+
+        _safe_print(f'[recorder][flush] ✅ 取出 {duration:.1f}s 音訊段落')
+        return self._to_wav_bytes(audio_data)
 
     @property
     def is_recording(self) -> bool:

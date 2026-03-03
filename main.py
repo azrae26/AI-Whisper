@@ -91,6 +91,7 @@ class App(ctk.CTk):
         self._anim_dots = 0
         self._anim_job = None
         self._history: list[str] = []  # 最近 10 組辨識結果
+        self._segment_check_job = None  # 分段辨識定時檢查 job
 
         self._build_ui()
         self._waveform_overlay = waveform.WaveformOverlay(self)
@@ -562,8 +563,15 @@ class App(ctk.CTk):
         self._waveform_overlay.show()
         self._start_anim()
         _debug_print(f'[main][{now_str()}] 🎙️ 開始錄音')
+        # 啟動分段辨識定時檢查（每 200ms 一次）
+        self._segment_check_job = self.after(200, self._check_segment)
 
     def _stop_recording(self):
+        # 取消分段定時檢查
+        if self._segment_check_job:
+            self.after_cancel(self._segment_check_job)
+            self._segment_check_job = None
+
         self._state = 'processing'
         self._stop_anim()
         self._waveform_overlay.show_processing()
@@ -584,6 +592,43 @@ class App(ctk.CTk):
 
         _debug_print(f'[main][{now_str()}] ✅ 錄音完成，送出辨識')
         threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
+
+    def _check_segment(self):
+        """每 200ms 檢查是否達到自動分段條件（累積 >= 18s 且靜音 >= 1s）"""
+        if self._state != 'recording':
+            return
+        accumulated = recorder.get_accumulated_seconds()
+        silence = recorder.get_silence_seconds()
+        if accumulated >= 18.0 and silence >= 1.0:
+            wav_bytes = recorder.flush_segment()
+            if wav_bytes:
+                _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
+                threading.Thread(
+                    target=self._run_segment_transcribe, args=(wav_bytes,), daemon=True
+                ).start()
+        self._segment_check_job = self.after(200, self._check_segment)
+
+    def _run_segment_transcribe(self, wav_bytes: bytes):
+        """分段辨識 thread：辨識完成後貼上並加入歷史，不影響錄音狀態"""
+        cfg = settings.get()
+        api_key = cfg.get('apiKey', '')
+        model = cfg.get('model', 'gpt-4o-transcribe')
+        if not api_key:
+            return
+        try:
+            text = transcriber.transcribe(wav_bytes, api_key=api_key, model=model)
+            _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text}"')
+            self.after(0, lambda: self._on_segment_done(text))
+        except Exception as e:
+            _debug_print(f'[main][{now_str()}] ❌ 分段辨識失敗: {e}')
+
+    def _on_segment_done(self, text: str):
+        """分段辨識完成：貼上結果並加入歷史，保持錄音中狀態不重置"""
+        text = text.rstrip('。')
+        if not text:
+            return
+        self._set_result(text)
+        paster.paste_text(text, delay_ms=30)
 
     def _run_transcribe(self, wav_bytes: bytes):
         cfg = settings.get()
