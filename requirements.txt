@@ -6,3 +6,5 @@ sounddevice
 numpy
 openai
 opencc-python-reimplemented
+comtypes
+uiautomation

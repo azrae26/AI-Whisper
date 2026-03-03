@@ -10,6 +10,13 @@ import threading
 import time
 import datetime
 
+# 修正 console 編碼，讓中文不會變問號
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
 # 在任何 tkinter 初始化之前，鎖定為 System DPI Awareness
 # 跨螢幕移動時由 Windows GPU 做點陣圖縮放，避免 tkinter 逐 widget 重算造成 lag
 try:
@@ -26,10 +33,11 @@ import settings
 import recorder as rec_module
 import transcriber
 import paster
+import waveform
 
 # ── 路徑 ─────────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ICON_PATH = os.path.join(BASE_DIR, 'assets', 'icon.png')
+ICON_PATH = os.path.join(BASE_DIR, 'assets', 'icon_256.png')
 
 # ── 全域狀態 ──────────────────────────────────────────────────────────────────
 recorder = rec_module.Recorder()
@@ -88,9 +96,10 @@ class App(ctk.CTk):
         self._page = 'main'   # main | settings
         self._anim_dots = 0
         self._anim_job = None
-        self._history: list[str] = []  # 最近 5 組辨識結果
+        self._history: list[str] = []  # 最近 10 組辨識結果
 
         self._build_ui()
+        self._waveform_overlay = waveform.WaveformOverlay(self)
         self._register_hotkey()
         self._start_tray()
 
@@ -121,20 +130,26 @@ class App(ctk.CTk):
         # ── 頂部標題列
         top = ctk.CTkFrame(frame, fg_color='#18181B', corner_radius=0, height=56)
         top.grid(row=0, column=0, sticky='ew')
-        top.grid_columnconfigure(0, weight=1)
+        top.grid_columnconfigure(1, weight=1)
         top.grid_propagate(False)
 
+        # 藍色 logo 圖示
+        if os.path.exists(ICON_PATH):
+            logo_img = ctk.CTkImage(Image.open(ICON_PATH), size=(23, 23))
+            ctk.CTkLabel(top, image=logo_img, text='').grid(row=0, column=0, padx=(20, 0), pady=(13, 15), sticky='w')
+            self._header_logo = logo_img  # 防 GC
+
         ctk.CTkLabel(
-            top, text='◉ AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
+            top, text='AI Whisper', font=ctk.CTkFont(family=font_family, size=18, weight='bold'),
             text_color='#F4F4F5'
-        ).grid(row=0, column=0, padx=20, pady=14, sticky='w')
+        ).grid(row=0, column=1, padx=(8, 0), pady=14, sticky='w')
 
         ctk.CTkButton(
             top, text='•••', width=40, height=40,
             fg_color='transparent', hover_color='#27272A',
             font=ctk.CTkFont(family=font_family, size=16, weight='bold'), text_color='#71717A',
             command=self._show_settings
-        ).grid(row=0, column=1, padx=(0, 12), pady=8, sticky='e')
+        ).grid(row=0, column=2, padx=(0, 12), pady=8, sticky='e')
 
         # ── 麥克風按鈕區
         mic_area = ctk.CTkFrame(frame, fg_color='transparent')
@@ -454,12 +469,14 @@ class App(ctk.CTk):
         )
         self._set_status('錄音中', '#EF4444')
         self._set_tray_icon('recording')
+        self._waveform_overlay.show()
         self._start_anim()
         _debug_print(f'[main][{now_str()}] 🎙️ 開始錄音')
 
     def _stop_recording(self):
         self._state = 'processing'
         self._stop_anim()
+        self._waveform_overlay.show_processing()
         self._mic_btn.configure(
             text='處理中…',
             fg_color='#1E1E24', hover_color='#1E1E24',
@@ -499,6 +516,9 @@ class App(ctk.CTk):
             self.after(0, lambda: self._on_transcribe_error(err_msg))
 
     def _on_transcribe_done(self, text: str):
+        # 移除尾部句號（辨識結果常自動帶句號，貼上時多餘）
+        text = text.rstrip('。')
+
         self._reset_idle()
         self._set_result(text)
         self._set_status('辨識完成 ✓', '#10B981')
@@ -515,6 +535,7 @@ class App(ctk.CTk):
 
     def _reset_idle(self):
         self._state = 'idle'
+        self._waveform_overlay.hide()
         self._mic_btn.configure(
             text='開始錄音',
             fg_color='#27272A', hover_color='#3F3F46',
@@ -557,6 +578,10 @@ class App(ctk.CTk):
         )
         self._mic_btn.configure(border_color=color)
 
+        # 更新波形覆蓋層
+        wf_data = recorder.get_waveform()
+        self._waveform_overlay.update(wf_data)
+
         self._anim_job = self.after(33, self._tick_anim)  # ~30fps
 
     def _stop_anim(self):
@@ -571,7 +596,7 @@ class App(ctk.CTk):
 
     def _set_result(self, text: str):
         self._history.insert(0, text)
-        self._history = self._history[:5]
+        self._history = self._history[:10]
         self._render_history()
 
     def _render_history(self):
@@ -632,6 +657,24 @@ class App(ctk.CTk):
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey} 已註冊')
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
+
+        # Alt+Shift+1~5：貼上記憶 1~5
+        for i in range(5):
+            idx = i
+            try:
+                keyboard.add_hotkey(f'alt+shift+{i + 1}', lambda idx=idx: self.after(0, self._paste_history, idx))
+            except Exception as e:
+                _debug_print(f'[main][{now_str()}] ❌ 記憶快捷鍵 alt+shift+{i + 1} 註冊失敗: {e}')
+        _debug_print(f'[main][{now_str()}] ✅ 記憶快捷鍵 Alt+Shift+1~5 已註冊')
+
+    def _paste_history(self, idx: int):
+        """用 Alt+Shift+1~5 貼上對應記憶"""
+        if idx < len(self._history):
+            text = self._history[idx]
+            _debug_print(f'[main][{now_str()}] 📋 貼上記憶 {idx + 1}: "{text[:20]}"')
+            paster.paste_text(text, delay_ms=100)
+        else:
+            _debug_print(f'[main][{now_str()}] ⚠️ 記憶 {idx + 1} 不存在')
 
     # ── 系統列 ────────────────────────────────────────────────────────────────
 

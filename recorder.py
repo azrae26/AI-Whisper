@@ -1,5 +1,5 @@
 # 功能：麥克風錄音
-# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式語音活動偵測（VAD）
+# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式 VAD 與即時波形資料
 # 依賴：sounddevice, numpy, wave, io, threading
 
 import io
@@ -56,6 +56,9 @@ class Recorder:
         self._frames: list[np.ndarray] = []
         self._stream: sd.InputStream | None = None
         self._lock = threading.Lock()
+        # 即時波形：儲存最近 N 個 RMS 值（0~1），供 UI 繪製波形
+        self._waveform: list[float] = []
+        self._wf_lock = threading.Lock()
 
     def start(self) -> bool:
         """開始錄音，回傳是否成功"""
@@ -63,11 +66,19 @@ class Recorder:
             if self._recording:
                 return False
             self._frames = []
+            self._waveform = []
             self._recording = True
 
         def _callback(indata, frames, time, status):
             if self._recording:
                 self._frames.append(indata.copy())
+                # 即時波形：計算本 chunk 的 RMS 並正規化到 0~1
+                rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+                level = min(1.0, rms / 5000)
+                with self._wf_lock:
+                    self._waveform.append(level)
+                    if len(self._waveform) > 200:
+                        self._waveform = self._waveform[-200:]
 
         try:
             self._stream = sd.InputStream(
@@ -125,6 +136,11 @@ class Recorder:
             wf.writeframes(audio_data.tobytes())
         buf.seek(0)
         return buf.read()
+
+    def get_waveform(self) -> list[float]:
+        """取得最近的波形資料（0~1 浮點陣列），供 UI 繪製"""
+        with self._wf_lock:
+            return self._waveform.copy()
 
     @property
     def is_recording(self) -> bool:
