@@ -1,11 +1,9 @@
 ---
 name: build-and-package
-description: 打包 AI Whisper 並壓縮成 zip 準備分發。當使用者說「包」、「打包」、「build」、「壓縮」、「產生 zip」、「分享給同事」時使用。排除：「推 包」「推包」「推+包」→ 改用 push-and-package，不需讀取本 skill。
+description: 打包 AI Whisper 並壓縮成 zip 準備分發。當使用者只說「包」、「打包」、「build」、「壓縮」、「產生 zip」、「分享給同事」時使用。排除：「推 包」「推包」「推+包」→ 改用 push-and-package，不需讀取本 skill。
 ---
 
 # AI Whisper 打包流程
-
-**不適用於「推包」情境：** 若使用者說「推 包」、「推包」、「推+包」，應使用 push-and-package skill，此時**不需讀取**本 skill。
 
 使用專屬 venv（`.venv-pack`）打包，避免系統環境裡的 torch/scipy 等大型套件拖慢速度。
 
