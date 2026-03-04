@@ -105,6 +105,10 @@ class App(ctk.CTk):
         self._register_hotkey()
         self._start_tray()
 
+        # 視窗移動/縮放時自動儲存位置（debounce 1s，避免頻繁寫檔）
+        self._geo_save_job = None
+        self.bind('<Configure>', self._on_configure)
+
         # 若無 API Key，啟動後自動開設定頁
         if not self._cfg.get('apiKey'):
             self.after(300, self._show_settings)
@@ -1062,7 +1066,7 @@ class App(ctk.CTk):
 
         def quit_app(icon, item):
             icon.stop()
-            self.after(0, self.destroy)
+            self.after(0, lambda: (self._save_geometry(), self.destroy()))
 
         menu = pystray.Menu(
             pystray.MenuItem('開啟視窗', show_window, default=True),
@@ -1086,7 +1090,16 @@ class App(ctk.CTk):
         self.lift()
         self.focus_force()
 
+    def _on_configure(self, event):
+        """視窗移動或縮放時觸發，debounce 1 秒後存入 config.json"""
+        if event.widget is not self:
+            return
+        if self._geo_save_job:
+            self.after_cancel(self._geo_save_job)
+        self._geo_save_job = self.after(1000, self._save_geometry)
+
     def _save_geometry(self):
+        self._geo_save_job = None
         settings.save({'geometry': self.geometry()})
 
     def _on_close(self):

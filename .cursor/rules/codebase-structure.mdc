@@ -39,7 +39,7 @@ alwaysApply: false
 |------|------|
 | `.cursor/rules/dev-workflow.mdc` | 開發流程：重啟流程、LOG 監控、程式碼品質 |
 | `.cursor/rules/codebase-structure.mdc` | 本檔：各檔案功能對照 |
-| `.cursor/skills/build-and-package/SKILL.md` | 打包流程：venv、PyInstaller、zip 產出、完成後啟動 dist 內 exe |
+| `.cursor/skills/build-and-package/SKILL.md` | 打包流程：備份/還原 config.json、venv、PyInstaller、zip、啟動 dist exe |
 
 ## 資料流簡圖
 

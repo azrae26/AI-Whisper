@@ -15,7 +15,14 @@ taskkill /F /IM "AI Whisper.exe" 2>$null
 Start-Sleep -Seconds 1
 ```
 
-### 2. 建立／確認 venv（第一次需要，之後略過）
+### 2. 備份 config.json（PyInstaller 會清空 dist，先備份避免設定遺失）
+```powershell
+$distDir = "f:\Cursor\AI Whisper\dist\AI Whisper"
+$configBak = "f:\Cursor\AI Whisper\config.json.pack.bak"
+if (Test-Path "$distDir\config.json") { Copy-Item "$distDir\config.json" $configBak -Force }
+```
+
+### 3. 建立／確認 venv（第一次需要，之後略過）
 ```powershell
 $venv = "f:\Cursor\AI Whisper\.venv-pack"
 if (-not (Test-Path $venv)) {
@@ -24,27 +31,34 @@ if (-not (Test-Path $venv)) {
 }
 ```
 
-### 3. 打包（使用 venv 的 python）
+### 4. 打包（使用 venv 的 python）
 ```powershell
 $python = "f:\Cursor\AI Whisper\.venv-pack\Scripts\python.exe"
 cd "f:\Cursor\AI Whisper"
 & $python -m PyInstaller -y --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --version-file version_info.txt --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox --hidden-import _tkinter main.py
 ```
 
-### 4. 壓縮成 zip
+### 5. 還原 config.json
+```powershell
+$configBak = "f:\Cursor\AI Whisper\config.json.pack.bak"
+$distDir = "f:\Cursor\AI Whisper\dist\AI Whisper"
+if (Test-Path $configBak) { Copy-Item $configBak "$distDir\config.json" -Force; Remove-Item $configBak -Force }
+```
+
+### 6. 壓縮成 zip
 ```powershell
 $timestamp = Get-Date -Format "yyyyMMdd_HHmm"
 $zipName = "AI Whisper_$timestamp.zip"
 Compress-Archive -Path "f:\Cursor\AI Whisper\dist\AI Whisper" -DestinationPath "f:\Cursor\AI Whisper\dist\$zipName" -Force
 ```
 
-### 5. 啟動打包後的 exe
+### 7. 啟動打包後的 exe
 ```powershell
 Start-Process "f:\Cursor\AI Whisper\dist\AI Whisper\AI Whisper.exe"
 ```
 執行時直接啟動 `dist\AI Whisper\AI Whisper.exe`，不要用 `py main.py`。
 
-### 6. 完成後告知使用者
+### 8. 完成後告知使用者
 - zip 路徑：`dist/AI Whisper_yyyyMMdd_HHmm.zip`
 - 傳給同事，解壓後直接執行 `AI Whisper.exe`
 - 首次執行需在設定頁輸入 API Key
@@ -55,3 +69,4 @@ Start-Process "f:\Cursor\AI Whisper\dist\AI Whisper\AI Whisper.exe"
 - 若打包失敗，先檢查 exe 是否仍在執行（步驟 1）
 - `.venv-pack` 已列入 `.gitignore`，不會被推送
 - 路徑請依實際 workspace 路徑調整（非固定 f:\）
+- 步驟 2 備份、步驟 5 還原 config.json，打包時不刪除使用者設定
