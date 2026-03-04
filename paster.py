@@ -1,5 +1,5 @@
 # 功能：自動貼上
-# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；貼上後還原原本剪貼簿內容；游標在文字最後面時自動補句號或逗號（由 end_prefix 決定）
+# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；貼上後還原原本剪貼簿內容；游標在文字最後面時自動補句號或逗號（由 end_prefix 決定）；若最後一字已是標點則不補
 # 依賴：keyboard, uiautomation, ctypes, datetime
 # 偵測原理：uiautomation 讀取焦點控件的文字和游標位置，零鍵盤操作
 # 優化：持久化 paste worker thread（COM 只初始化一次）+ ctypes clipboard（thread-safe）
@@ -69,6 +69,14 @@ def _init_clipboard_api():
 
 _init_clipboard_api()
 
+
+# 游標在最後時，若文字最後一字已是這些標點則不補 end_prefix，避免重複（含中英、全半形、括弧結尾）
+_ENDING_PUNCTUATION = frozenset(
+    '。，、；：？！. , ; : ? ! …'
+    '．，；：？！'  # 全形標點
+    '—–-'        # 破折號、連字號
+    '·\'"~'      # 間隔號、引號、波浪
+)
 
 # 剪貼簿格式中屬於 GDI 物件的 handle，不可使用 GlobalLock，需排除
 _CLIPBOARD_GDI_FORMATS = {
@@ -170,13 +178,13 @@ def _set_clipboard_ctypes(text: str) -> bool:
         user32.CloseClipboard()
 
 
-def _is_cursor_at_end() -> bool:
-    """用 UI Automation 判斷游標是否在文字最後面（零鍵盤操作、零游標移動）"""
+def _is_cursor_at_end() -> tuple[bool, bool]:
+    """用 UI Automation 判斷游標是否在文字最後面；回傳 (at_end, last_char_is_punctuation)"""
     try:
         focused = auto.GetFocusedControl()
         if not focused:
             _safe_print(f'[paster][{_now()}] ⚠️ 無焦點控件')
-            return False
+            return (False, False)
 
         # 取得文字內容
         try:
@@ -187,7 +195,7 @@ def _is_cursor_at_end() -> bool:
 
         if not text:
             _safe_print(f'[paster][{_now()}] 📏 [UIA] 文字為空 → 不加句號')
-            return False
+            return (False, False)
 
         # 用 TextPattern 判斷游標是否在最後面
         # 策略：取「游標→文件結尾」的文字，若為空 = 游標在最後
@@ -198,7 +206,7 @@ def _is_cursor_at_end() -> bool:
 
             if not sel:
                 _safe_print(f'[paster][{_now()}] ⚠️ [UIA] GetSelection 為空')
-                return False
+                return (False, False)
 
             caret = sel[0]
 
@@ -208,22 +216,24 @@ def _is_cursor_at_end() -> bool:
             text_after = after_range.GetText(-1)
 
             at_end = (len(text_after) == 0)
-            _safe_print(f'[paster][{_now()}] 📏 [UIA] text={repr(text[:20])}, text_after={repr(text_after[:20])}, at_end={at_end}')
-            return at_end
+            stripped = text.rstrip()
+            last_char_is_punctuation = bool(stripped and stripped[-1] in _ENDING_PUNCTUATION)
+            _safe_print(f'[paster][{_now()}] 📏 [UIA] text={repr(text[:20])}, text_after={repr(text_after[:20])}, at_end={at_end}, last_punct={last_char_is_punctuation}')
+            return (at_end, last_char_is_punctuation)
         except Exception as e:
             _safe_print(f'[paster][{_now()}] ⚠️ [UIA] TextPattern 不支援: {e}')
-            return False
+            return (False, False)
 
     except Exception as e:
         _safe_print(f'[paster][{_now()}] ⚠️ [UIA] 錯誤: {e}')
-        return False
+        return (False, False)
 
 
 # ── 游標位置預取 ─────────────────────────────────────────────────────────────
 # 錄音結束時預先偵測游標是否在文字最後面，API 回傳後直接使用，省去 ~500ms UIA 延遲
 
 _prefetch_lock = threading.Lock()
-_prefetch_result: tuple | None = None  # (perf_counter timestamp, at_end bool)
+_prefetch_result: tuple | None = None  # (perf_counter timestamp, at_end bool, last_char_is_punctuation bool)
 
 
 def prefetch_cursor_position(wav_bytes_len: int = 0) -> None:
@@ -249,48 +259,50 @@ def prefetch_cursor_position(wav_bytes_len: int = 0) -> None:
         import comtypes
         comtypes.CoInitialize()
         try:
-            at_end = _is_cursor_at_end()
+            at_end, last_char_is_punctuation = _is_cursor_at_end()
             with _prefetch_lock:
                 global _prefetch_result
-                _prefetch_result = (time.perf_counter(), at_end)
-            _safe_print(f'[paster][{_now()}] 🔮 預取游標位置: at_end={at_end} (delay={prefetch_delay:.2f}s, est_api={estimated_api:.2f}s)')
+                _prefetch_result = (time.perf_counter(), at_end, last_char_is_punctuation)
+            _safe_print(f'[paster][{_now()}] 🔮 預取游標位置: at_end={at_end}, last_punct={last_char_is_punctuation} (delay={prefetch_delay:.2f}s, est_api={estimated_api:.2f}s)')
         finally:
             comtypes.CoUninitialize()
     threading.Thread(target=_do_prefetch, daemon=True, name='UIA-Prefetch').start()
 
 
-def _consume_prefetch(max_age: float = 10.0):
-    """取出預取結果（消耗式），超過 max_age 秒視為過期回傳 None"""
+def _consume_prefetch(max_age: float = 10.0) -> tuple[bool, bool] | None:
+    """取出預取結果（消耗式），超過 max_age 秒視為過期回傳 None；回傳 (at_end, last_char_is_punctuation)"""
     with _prefetch_lock:
         global _prefetch_result
         if _prefetch_result is None:
             return None
-        ts, at_end = _prefetch_result
+        ts, at_end, last_char_is_punctuation = _prefetch_result
         _prefetch_result = None
         if time.perf_counter() - ts > max_age:
             return None
-        return at_end
+        return (at_end, last_char_is_punctuation)
 
 
 def _execute_paste(text: str, delay_ms: int, t_received: float, end_prefix: str = '。') -> None:
-    """在持久化 worker thread 內執行，COM 已預先初始化；end_prefix：游標在文字最後時加在辨識內容前的符號（句號或逗號）"""
+    """在持久化 worker thread 內執行，COM 已預先初始化；end_prefix：游標在文字最後時加在辨識內容前的符號（句號或逗號）；若最後一字已是標點則不補"""
     prefetched = _consume_prefetch()
 
     if prefetched is not None:
-        at_end = prefetched
+        at_end, last_char_is_punctuation = prefetched
         if delay_ms > 0:
             time.sleep(delay_ms / 1000)
-        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end} (prefetched), prefix={repr(end_prefix)}, final={repr(text[:40])}')
+        add_prefix = at_end and not last_char_is_punctuation
+        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, last_punct={last_char_is_punctuation}, add_prefix={add_prefix} (prefetched), prefix={repr(end_prefix)}, final={repr(text[:40])}')
     else:
         t0 = time.perf_counter()
-        at_end = _is_cursor_at_end()
+        at_end, last_char_is_punctuation = _is_cursor_at_end()
         elapsed_ms = (time.perf_counter() - t0) * 1000
         remaining = delay_ms - elapsed_ms
         if remaining > 0:
             time.sleep(remaining / 1000)
-        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, prefix={repr(end_prefix)}, uia={elapsed_ms:.0f}ms, final={repr(text[:40])}')
+        add_prefix = at_end and not last_char_is_punctuation
+        _safe_print(f'[paster][{_now()}] 🎯 PASTE: at_end={at_end}, last_punct={last_char_is_punctuation}, add_prefix={add_prefix}, prefix={repr(end_prefix)}, uia={elapsed_ms:.0f}ms, final={repr(text[:40])}')
 
-    final_text = (end_prefix + text) if at_end else text
+    final_text = (end_prefix + text) if add_prefix else text
 
     # 暫存原本的剪貼簿所有格式（文字、圖片等）
     old_clipboard = _save_clipboard_all()
