@@ -1,5 +1,5 @@
 # 功能：設定管理
-# 職責：讀寫 config.json（API Key、快捷鍵、加逗號快捷鍵、歷史識別快捷鍵、模型、開機啟動、視窗位置）
+# 職責：讀寫 config.json（API Key、快捷鍵、加逗號快捷鍵、歷史識別快捷鍵、模型、文字校正、開機啟動、視窗位置）
 # 依賴：json, os, winreg, sys
 
 import json
@@ -15,11 +15,12 @@ def _safe_print(msg: str):
         print(msg.encode('ascii', 'replace').decode('ascii'))
 
 
-# 打包後 config 存 exe 同目錄（可持久）；開發時存 script 同目錄
+# 打包後與開發模式共用 config：皆存於 dist/AI Whisper/config.json（打包版 exe 同目錄）
+_script_dir = os.path.dirname(os.path.abspath(__file__))
 if getattr(sys, '_MEIPASS', None):
     BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    BASE_DIR = os.path.join(_script_dir, 'dist', 'AI Whisper')
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 APP_NAME = 'AIWhisper'
 
@@ -29,6 +30,7 @@ DEFAULTS = {
     'hotkey_comma': 'insert',
     'history_hotkeys': ['alt+shift+1', 'alt+shift+2', 'alt+shift+3', 'alt+shift+4', 'alt+shift+5'],
     'model': 'gpt-4o-transcribe',
+    'text_corrections': [],
     'startup': True,
 }
 
@@ -50,6 +52,7 @@ def get() -> dict:
 def save(updates: dict) -> None:
     current = get()
     current.update(updates)
+    os.makedirs(BASE_DIR, exist_ok=True)
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(current, f, ensure_ascii=False, indent=2)
 

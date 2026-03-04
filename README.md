@@ -27,6 +27,7 @@ python main.py
 |------|------|
 | API Key | OpenAI API Key，存在本機 config.json（exe 同目錄；開發時為 script 同目錄） |
 | 辨識模型 | `gpt-4o-transcribe`（最強）/ `whisper-1`（舊版相容） |
+| 文字校正 | 每行一組「原字→替換字」（支援 → = , : \| Tab），辨識結果會自動替換 |
 | 全域快捷鍵 | 句號快捷鍵，格式如 `alt+\`` |
 | 加逗號快捷鍵 | 辨識貼上時游標在文字最後加逗號，預設 `insert` |
 | 開機啟動 | 寫入 Windows 登錄機碼自動啟動 |

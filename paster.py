@@ -1,5 +1,5 @@
 # 功能：自動貼上
-# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；游標在文字最後面時自動補句號或逗號（由 end_prefix 決定）
+# 職責：將文字寫入剪貼簿，延遲後模擬 Ctrl+V 貼到當前游標位置；貼上後還原原本剪貼簿內容；游標在文字最後面時自動補句號或逗號（由 end_prefix 決定）
 # 依賴：keyboard, uiautomation, ctypes, datetime
 # 偵測原理：uiautomation 讀取焦點控件的文字和游標位置，零鍵盤操作
 # 優化：持久化 paste worker thread（COM 只初始化一次）+ ctypes clipboard（thread-safe）
@@ -44,26 +44,97 @@ def set_tk_root(root) -> None:
     _tk_root = root
 
 
-def _set_clipboard_ctypes(text: str) -> bool:
-    """使用 ctypes 直接呼叫 Windows API 寫入剪貼簿，可從任意執行緒安全呼叫"""
-    CF_UNICODETEXT = 13
-    GMEM_MOVEABLE = 0x0002
+_CF_UNICODETEXT = 13
+_GMEM_MOVEABLE = 0x0002
+
+
+def _init_clipboard_api():
+    """宣告 ctypes argtypes/restype（僅需呼叫一次）"""
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     user32   = ctypes.windll.user32    # type: ignore[attr-defined]
-    # 64-bit Windows：HANDLE / HGLOBAL / LPVOID 都是指標大小，必須明確宣告 argtypes + restype
     kernel32.GlobalAlloc.argtypes  = [ctypes.c_uint, ctypes.c_size_t]
     kernel32.GlobalAlloc.restype   = ctypes.c_void_p
     kernel32.GlobalLock.argtypes   = [ctypes.c_void_p]
     kernel32.GlobalLock.restype    = ctypes.c_void_p
     kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
     kernel32.GlobalFree.argtypes   = [ctypes.c_void_p]
+    kernel32.GlobalSize.argtypes   = [ctypes.c_void_p]
+    kernel32.GlobalSize.restype    = ctypes.c_size_t
     user32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    user32.GetClipboardData.argtypes = [ctypes.c_uint]
+    user32.GetClipboardData.restype  = ctypes.c_void_p
+    user32.EnumClipboardFormats.argtypes = [ctypes.c_uint]
+    user32.EnumClipboardFormats.restype  = ctypes.c_uint
+
+
+_init_clipboard_api()
+
+
+def _save_clipboard_all() -> list[tuple[int, bytes]] | None:
+    """備份剪貼簿所有格式的原始資料，回傳 [(format, bytes), ...] 或 None"""
+    user32   = ctypes.windll.user32    # type: ignore[attr-defined]
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    if not user32.OpenClipboard(0):
+        return None
+    try:
+        items: list[tuple[int, bytes]] = []
+        fmt = user32.EnumClipboardFormats(0)
+        while fmt:
+            h = user32.GetClipboardData(fmt)
+            if h:
+                ptr = kernel32.GlobalLock(h)
+                if ptr:
+                    try:
+                        size = kernel32.GlobalSize(h)
+                        items.append((fmt, ctypes.string_at(ptr, size)))
+                    finally:
+                        kernel32.GlobalUnlock(h)
+            fmt = user32.EnumClipboardFormats(fmt)
+        return items if items else None
+    except Exception as e:
+        _safe_print(f'[paster][{_now()}] ⚠️ 備份剪貼簿失敗: {e}')
+        return None
+    finally:
+        user32.CloseClipboard()
+
+
+def _restore_clipboard_all(items: list[tuple[int, bytes]]) -> bool:
+    """從備份資料還原剪貼簿所有格式"""
+    user32   = ctypes.windll.user32    # type: ignore[attr-defined]
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    if not user32.OpenClipboard(0):
+        return False
+    try:
+        user32.EmptyClipboard()
+        for fmt, data in items:
+            h = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
+            if not h:
+                continue
+            ptr = kernel32.GlobalLock(h)
+            if not ptr:
+                kernel32.GlobalFree(h)
+                continue
+            ctypes.memmove(ptr, data, len(data))
+            kernel32.GlobalUnlock(h)
+            user32.SetClipboardData(fmt, h)
+        return True
+    except Exception as e:
+        _safe_print(f'[paster][{_now()}] ⚠️ 還原剪貼簿失敗: {e}')
+        return False
+    finally:
+        user32.CloseClipboard()
+
+
+def _set_clipboard_ctypes(text: str) -> bool:
+    """使用 ctypes 直接呼叫 Windows API 寫入剪貼簿，可從任意執行緒安全呼叫"""
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    user32   = ctypes.windll.user32    # type: ignore[attr-defined]
     data = (text + '\0').encode('utf-16-le')
     if not user32.OpenClipboard(0):
         return False
     try:
         user32.EmptyClipboard()
-        h = kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+        h = kernel32.GlobalAlloc(_GMEM_MOVEABLE, len(data))
         if not h:
             return False
         ptr = kernel32.GlobalLock(h)
@@ -72,7 +143,7 @@ def _set_clipboard_ctypes(text: str) -> bool:
             return False
         ctypes.memmove(ptr, data, len(data))
         kernel32.GlobalUnlock(h)
-        user32.SetClipboardData(CF_UNICODETEXT, h)
+        user32.SetClipboardData(_CF_UNICODETEXT, h)
         return True
     finally:
         user32.CloseClipboard()
@@ -200,11 +271,20 @@ def _execute_paste(text: str, delay_ms: int, t_received: float, end_prefix: str 
 
     final_text = (end_prefix + text) if at_end else text
 
+    # 暫存原本的剪貼簿所有格式（文字、圖片等）
+    old_clipboard = _save_clipboard_all()
+
     _set_clipboard_ctypes(final_text)
     keyboard.send('ctrl+v')
 
     if t_received:
         _safe_print(f'[paster][{_now()}] ⏱️ 收到→貼上完成: {time.perf_counter() - t_received:.2f}s')
+
+    # 等待 Ctrl+V 完成後還原原本的剪貼簿
+    time.sleep(0.15)
+    if old_clipboard is not None:
+        _restore_clipboard_all(old_clipboard)
+        _safe_print(f'[paster][{_now()}] 📋 剪貼簿已還原（{len(old_clipboard)} 種格式）')
 
 
 def _paste_worker() -> None:

@@ -1,5 +1,5 @@
 # 功能：AI Whisper 語音轉文字主程式
-# 職責：UI 管理（主頁面/設定頁面）、系統列常駐、全域快捷鍵、錄音與辨識流程協調
+# 職責：UI 管理（主頁面/設定頁面）、系統列常駐、全域快捷鍵、錄音與辨識流程協調、辨識結果文字校正
 # 依賴：customtkinter, pystray, keyboard, recorder, transcriber, paster, settings
 
 import ctypes
@@ -60,6 +60,35 @@ def _debug_print(msg: str):
         print(msg)
     except UnicodeEncodeError:
         print(msg.encode('ascii', 'replace').decode('ascii'))
+
+# 文字校正：支援多種分隔符
+_TEXT_CORRECTION_DELIMITERS = ('→', '=', ',', ':', '|', '\t')
+
+
+def _parse_text_corrections(text: str) -> list[dict]:
+    """將大框文字解析為 [{"from":..., "to":...}]，支援多種分隔符"""
+    result = []
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        for sep in _TEXT_CORRECTION_DELIMITERS:
+            if sep in line:
+                parts = line.split(sep, 1)
+                if len(parts) == 2 and parts[0].strip():
+                    result.append({'from': parts[0].strip(), 'to': parts[1].strip()})
+                break
+    return result
+
+
+def _apply_text_corrections(text: str) -> str:
+    """依 config 的 text_corrections 對辨識結果做替換"""
+    corrections = settings.get().get('text_corrections', [])
+    for item in corrections:
+        src = item.get('from', '')
+        if src:
+            text = text.replace(src, item.get('to', ''))
+    return text
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -494,6 +523,47 @@ class App(ctk.CTk):
         ).grid(row=row, column=0, sticky='ew', pady=(0, 20))
         row += 1
 
+        # ── 6. 文字校正
+        add_label('文字校正')
+        row += 1
+
+        ctk.CTkLabel(
+            scroll,
+            text='每行一組，格式：原字,替換字；辨識結果會自動替換',
+            font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
+        ).grid(row=row, column=0, sticky='w', pady=(0, 6))
+        row += 1
+
+        corrections_cfg = self._cfg.get('text_corrections', [])
+        corrections_lines = [f"{c.get('from', '')}→{c.get('to', '')}" for c in corrections_cfg if c.get('from')]
+        _LINE_HEIGHT = 24
+        _MIN_HEIGHT, _MAX_HEIGHT = 90, 300
+        self._text_correction_textbox = ctk.CTkTextbox(
+            scroll, height=90,
+            font=ctk.CTkFont(family=font_family, size=14),
+            fg_color='#27272A', border_color='#3F3F46',
+        )
+        self._text_correction_textbox.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        self._text_correction_textbox.insert('1.0', '\n'.join(corrections_lines))
+        self._text_correction_textbox.bind('<FocusOut>', lambda e: self._auto_save())
+        self._text_correction_textbox.bind('<KeyRelease>', self._on_text_correction_change)
+        self._text_correction_textbox.bind('<<Paste>>', lambda e: self.after(50, lambda: self._on_text_correction_change()))
+
+        # 滑鼠在文字框上時，滾輪事件只作用於文字框，不向上冒泡到設定頁捲動區
+        def _block_scroll(e):
+            self._text_correction_textbox._textbox.yview_scroll(int(-1 * (e.delta / 120)), 'units')
+            return 'break'
+        self._text_correction_textbox.bind('<MouseWheel>', _block_scroll)
+
+        def _resize_textbox():
+            content = self._text_correction_textbox.get('1.0', 'end')
+            line_count = max(4, len(content.strip().splitlines())) if content.strip() else 4
+            new_h = min(_MAX_HEIGHT, max(_MIN_HEIGHT, line_count * _LINE_HEIGHT))
+            self._text_correction_textbox.configure(height=new_h)
+
+        self._resize_text_correction_textbox = _resize_textbox
+        _resize_textbox()
+        row += 1
 
         return frame
 
@@ -516,6 +586,11 @@ class App(ctk.CTk):
     def _toggle_key_visibility(self):
         self._key_visible = not self._key_visible
         self._api_key_entry.configure(show='' if self._key_visible else '•')
+
+    def _on_text_correction_change(self, event=None):
+        """文字校正框內容變動時自動擴展高度"""
+        if hasattr(self, '_resize_text_correction_textbox'):
+            self._resize_text_correction_textbox()
 
     _MODIFIERS = {'ctrl', 'shift', 'alt', 'left ctrl', 'right ctrl',
                    'left shift', 'right shift', 'left alt', 'right alt',
@@ -591,12 +666,14 @@ class App(ctk.CTk):
 
     def _auto_save(self):
         """設定變動時靜默自動儲存，不跳頁、不顯示訊息"""
+        text_corrections_raw = self._text_correction_textbox.get('1.0', 'end')
         new_cfg = {
             'apiKey': self._api_key_var.get().strip(),
             'model': self._model_var.get(),
             'hotkey': self._hotkey_var.get().strip().lower(),
             'hotkey_comma': self._hotkey_comma_var.get().strip().lower(),
             'history_hotkeys': [v.get().strip().lower() for v in self._history_hotkey_vars],
+            'text_corrections': _parse_text_corrections(text_corrections_raw),
             'startup': self._startup_var.get(),
         }
         settings.save(new_cfg)
@@ -720,6 +797,7 @@ class App(ctk.CTk):
             text = self._transcribe_with_retry(wav_bytes, api_key, model)
             t_received = time.perf_counter()
             text_clean = text.rstrip('。')
+            text_clean = _apply_text_corrections(text_clean)
             _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text_clean}"')
             if text_clean:
                 paster.paste_text(text_clean, delay_ms=30, t_received=t_received, end_prefix=self._paste_prefix)
@@ -748,6 +826,7 @@ class App(ctk.CTk):
             text = self._transcribe_with_retry(wav_bytes, api_key, model)
             t_received = time.perf_counter()
             text_clean = text.rstrip('。')
+            text_clean = _apply_text_corrections(text_clean)
             _debug_print(f'[main][{now_str()}] ✅ 辨識完成: "{text_clean}"')
             if text_clean:
                 paster.paste_text(text_clean, t_received=t_received, end_prefix=self._paste_prefix)
