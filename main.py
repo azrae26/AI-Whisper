@@ -990,25 +990,32 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-        # 移除先前為 insert 特製的 Win32 hook（若有的話）
-        self._insert_hook_stop()
+        # 移除先前為 insert 特製的 hook（若有的話）
+        comma_hook_remove = getattr(self, '_comma_hook_remove', None)
+        if comma_hook_remove:
+            try:
+                comma_hook_remove()
+            except Exception:
+                pass
+            self._comma_hook_remove = None
 
         hotkey = self._cfg.get('hotkey', 'alt+`')
         hotkey_comma = self._cfg.get('hotkey_comma', 'insert')
         try:
-            # Insert 與小鍵盤 0 共用 scan code 82，keyboard 庫的 add_hotkey 無法區分。
-            # 凡 main_key == 'insert' 的快捷鍵，改用 Win32 LowLevelKeyboardHook 處理。
-            def _parse(hk_str):
+            def _parse_hk(hk_str):
                 parts = [p.strip().lower() for p in hk_str.split('+')]
                 mods = [p for p in parts if p in self._MODIFIERS]
                 main_key = next((p for p in reversed(parts) if p not in self._MODIFIERS), None)
                 return mods, main_key
 
-            hk_mods, hk_main = _parse(hotkey)
-            hc_mods, hc_main = _parse(hotkey_comma)
+            hk_mods, hk_main = _parse_hk(hotkey)
+            hc_mods, hc_main = _parse_hk(hotkey_comma)
 
-            # 收集需要 Win32 hook 的 insert 觸發器 (mods, punct)
-            insert_triggers = []
+            # Insert 與小鍵盤 0 共用 scan code 82，add_hotkey 無法區分。
+            # 凡 main_key == 'insert' 的快捷鍵，改用 keyboard.hook 檢查 event.name，
+            # 排除小鍵盤 0（Num Lock ON 時 event.name 為 '0'）。
+            insert_triggers = []  # list of (mods, punct)
+
             if hk_main == 'insert':
                 insert_triggers.append((hk_mods, '。'))
             else:
@@ -1020,7 +1027,19 @@ class App(ctk.CTk):
                 keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
 
             if insert_triggers:
-                self._insert_hook_start(insert_triggers)
+                def _on_insert_hook(event, _triggers=insert_triggers):
+                    if event.event_type != keyboard.KEY_DOWN:
+                        return
+                    # 僅響應 event.name == 'insert'，排除小鍵盤 0（name 為 '0'）
+                    if event.name and event.name.lower() != 'insert':
+                        return
+                    for mods, punct in _triggers:
+                        if all(keyboard.is_pressed(m) for m in mods):
+                            p = punct
+                            self.after(0, lambda p=p: self._toggle_recording(p))
+                            break
+
+                self._comma_hook_remove = keyboard.hook(_on_insert_hook)
 
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey}（句號）、{hotkey_comma}（逗號）已註冊')
         except Exception as e:
@@ -1028,96 +1047,6 @@ class App(ctk.CTk):
 
         # 歷史識別快捷鍵：用 Win32 RegisterHotKey 確保按鍵完全攔截不穿透
         self._register_history_hotkeys()
-
-    def _insert_hook_stop(self):
-        """停止 Insert 專用 Win32 hook"""
-        tid = getattr(self, '_insert_hook_tid', 0)
-        if tid:
-            try:
-                ctypes.windll.user32.PostThreadMessageW(tid, 0x0012, 0, 0)
-            except Exception:
-                pass
-            self._insert_hook_tid = 0
-        thr = getattr(self, '_insert_hook_thread', None)
-        if thr and thr.is_alive():
-            thr.join(timeout=1.0)
-
-    def _insert_hook_start(self, triggers: list):
-        """用 Win32 LowLevelKeyboardHook 只響應 Insert (vk=0x2D)，排除 Numpad 0 (vk=0x60)
-        triggers: list of (mods_list, punct_char)，每組獨立判斷修飾鍵"""
-        from ctypes import wintypes
-
-        VK_INSERT = 0x2D
-        VK_SHIFT, VK_CONTROL, VK_MENU = 0x10, 0x11, 0x12
-        WM_KEYDOWN = 0x0100
-        WH_KEYBOARD_LL = 13
-
-        app = self
-
-        def _mod_vks(mods):
-            result = []
-            for m in mods:
-                if m == 'shift': result.append((VK_SHIFT, 0xA0, 0xA1))
-                elif m in ('ctrl', 'control'): result.append((VK_CONTROL, 0xA2, 0xA3))
-                elif m == 'alt': result.append((VK_MENU, 0xA4, 0xA5))
-            return result
-
-        # 預先計算每個觸發器的修飾鍵 vk 列表
-        compiled = [(_mod_vks(mods), punct) for mods, punct in triggers]
-
-        def _mods_ok(mod_vks):
-            if not mod_vks:
-                return True
-            u32 = ctypes.windll.user32
-            return all(any(u32.GetAsyncKeyState(v) & 0x8000 for v in vks) for vks in mod_vks)
-
-        class KBDLLHOOKSTRUCT(ctypes.Structure):
-            _fields_ = [("vk_code", ctypes.c_uint), ("scan_code", ctypes.c_uint),
-                        ("flags", ctypes.c_uint), ("time", ctypes.c_int), ("dwExtraInfo", ctypes.c_void_p)]
-
-        # WINFUNCTYPE 符合 Windows stdcall 呼叫慣例，64-bit 必須使用
-        CBP = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
-
-        def low_level_handler(nCode, wParam, lParam):
-            if nCode >= 0 and wParam == WM_KEYDOWN:
-                kbd = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-                if kbd.vk_code == VK_INSERT:
-                    for mod_vks, punct in compiled:
-                        if _mods_ok(mod_vks):
-                            p = punct
-                            app.after(0, lambda p=p: app._toggle_recording(p))
-                            break
-            return ctypes.windll.user32.CallNextHookEx(None, nCode, wParam, lParam)
-
-        user32 = ctypes.WinDLL('user32', use_last_error=True)
-        self._insert_hook_cb = CBP(low_level_handler)
-        # WH_KEYBOARD_LL 的 hmod 必須傳 None（不能傳 GetModuleHandleW(None)，會 ERROR_MOD_NOT_FOUND）
-        self._insert_hook_handle = user32.SetWindowsHookExW(
-            WH_KEYBOARD_LL, self._insert_hook_cb, None, 0)
-        if self._insert_hook_handle:
-            _debug_print(f'[main][{now_str()}] ✅ Insert hook 安裝成功（{len(triggers)} 個觸發器）')
-        else:
-            _debug_print(f'[main][{now_str()}] ❌ Insert hook 安裝失敗 err={ctypes.get_last_error()}')
-
-        self._insert_hook_tid = 0
-
-        def msg_loop():
-            import time as _time
-            app._insert_hook_tid = ctypes.windll.kernel32.GetCurrentThreadId()
-            _user32 = ctypes.windll.user32
-            msg = wintypes.MSG()
-            PM_REMOVE = 0x0001
-            while True:
-                while _user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
-                    if msg.message == 0x0012:  # WM_QUIT
-                        _user32.UnhookWindowsHookEx(app._insert_hook_handle)
-                        return
-                    _user32.TranslateMessage(ctypes.byref(msg))
-                    _user32.DispatchMessageW(ctypes.byref(msg))
-                _time.sleep(0.01)
-
-        self._insert_hook_thread = threading.Thread(target=msg_loop, daemon=True, name='InsertHook')
-        self._insert_hook_thread.start()
 
     # ── Win32 RegisterHotKey（記憶快捷鍵）────────────────────────────────────
 

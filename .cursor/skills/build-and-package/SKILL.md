@@ -1,6 +1,6 @@
 ---
 name: build-and-package
-description: 打包 AI Whisper 並壓縮成 zip 準備分發。當使用者只說「包」、「打包」、「build」、「壓縮」、「產生 zip」、「分享給同事」時使用。排除：「推 包」「推包」「推+包」→ 改用 push-and-package，不需讀取本 skill。
+description: 打包 AI Whisper 並壓縮成 zip 準備分發。當使用者說「包」、「打包」、「build」、「壓縮」、「產生 zip」、「分享給同事」時使用。
 ---
 
 # AI Whisper 打包流程
