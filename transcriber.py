@@ -10,8 +10,9 @@ from opencc import OpenCC
 
 _s2t = OpenCC('s2t')
 
-# Whisper 模型有時輸出罕用異體字，在此統一校正
+# Whisper 模型有時輸出罕用異體字、半形標點，在此統一校正
 _POST_CORRECTIONS: dict[str, str] = {
+    '?': '？',  # 半形 → 全形問號
     '纔': '才',
     '裏': '裡',
     # 臺 → 台（以詞為單位，避免罕見情況誤換）
