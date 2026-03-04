@@ -45,11 +45,20 @@ $distDir = "f:\Cursor\AI Whisper\dist\AI Whisper"
 if (Test-Path $configBak) { Copy-Item $configBak "$distDir\config.json" -Force; Remove-Item $configBak -Force }
 ```
 
-### 6. 壓縮成 zip
+### 6. 壓縮成 zip（先複製再壓縮，避開檔案被鎖）
 ```powershell
+Start-Sleep -Seconds 2
+$workspace = "f:\Cursor\AI Whisper"
 $timestamp = Get-Date -Format "yyyyMMdd_HHmm"
 $zipName = "AI Whisper_$timestamp.zip"
-Compress-Archive -Path "f:\Cursor\AI Whisper\dist\AI Whisper" -DestinationPath "f:\Cursor\AI Whisper\dist\$zipName" -Force
+$srcDir = "$workspace\dist\AI Whisper"
+$stagingParent = "$workspace\dist\_zipstaging"
+$stagingDir = "$stagingParent\AI Whisper"
+if (Test-Path $stagingParent) { Remove-Item $stagingParent -Recurse -Force }
+New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
+Copy-Item "$srcDir\*" $stagingDir -Recurse -Force
+Compress-Archive -Path $stagingDir -DestinationPath "$workspace\dist\$zipName" -Force
+Remove-Item $stagingParent -Recurse -Force
 ```
 
 ### 7. 啟動打包後的 exe
