@@ -33,10 +33,13 @@ if (-not (Test-Path $venv)) {
 
 ### 4. 打包（使用 venv 的 python）
 ```powershell
-$python = "f:\Cursor\AI Whisper\.venv-pack\Scripts\python.exe"
-cd "f:\Cursor\AI Whisper"
-& $python -m PyInstaller -y --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --version-file version_info.txt --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox --hidden-import _tkinter main.py
+$workspace = "f:\Cursor\AI Whisper"
+$python = "$workspace\.venv-pack\Scripts\python.exe"
+$ctkPath = "$workspace\.venv-pack\Lib\site-packages\customtkinter"
+cd $workspace
+& $python -m PyInstaller -y --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --add-data "$ctkPath;customtkinter" --version-file version_info.txt --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox --hidden-import _tkinter main.py
 ```
+CustomTkinter 含 .json 等資料檔，PyInstaller 不會自動打包，需手動 `--add-data`（參見 [CustomTkinter Packaging](https://github.com/TomSchimansky/CustomTkinter/wiki/Packaging#windows-pyinstaller-auto-py-to-exe)）。
 
 ### 5. 還原 config.json
 ```powershell
@@ -75,7 +78,7 @@ Start-Process "f:\Cursor\AI Whisper\dist\AI Whisper\AI Whisper.exe"
 
 ## 注意事項
 - 使用 PowerShell，不使用 `&&`
-- 打包指令已含 `--hidden-import tkinter` 等，解決 customtkinter 找不到 tkinter 的問題
+- 打包指令已含 `--hidden-import tkinter` 等、`--add-data` customtkinter（含 themes/*.json），解決 customtkinter 找不到 tkinter 與 theme 的問題
 - 若打包失敗，先檢查 exe 是否仍在執行（步驟 1）
 - `.venv-pack` 已列入 `.gitignore`，不會被推送
 - 路徑請依實際 workspace 路徑調整（非固定 f:\）

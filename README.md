@@ -35,8 +35,9 @@ python main.py
 
 ```bash
 python -m pip install pyinstaller
-python -m PyInstaller --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --version-file version_info.txt main.py
+python -m PyInstaller --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --add-data "<path-to-site-packages>/customtkinter;customtkinter" --version-file version_info.txt --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox --hidden-import _tkinter main.py
 ```
+其中 `<path-to-site-packages>` 可用 `pip show customtkinter` 查詢 Location，例如 `C:\...\Lib\site-packages`。CustomTkinter 含 themes 等資料檔，須手動 `--add-data`。
 
 產出位於 `dist/AI Whisper/` 資料夾，將整個資料夾壓成 zip 分發即可。`config.json` 會產生在 exe 同目錄，設定可持久保存。
 
