@@ -72,6 +72,8 @@ switch ($Role) {
             Copy-Item "$distDir\*" $stagingDir -Recurse -Force
             Compress-Archive -Path $stagingDir -DestinationPath "$workspace\dist\$zipName" -Force
             Remove-Item $stagingParent -Recurse -Force -ErrorAction SilentlyContinue
+            # zip 只保留最近 3 個，其餘刪除
+            Get-ChildItem "$workspace\dist\AI Whisper_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force
             Start-Process "$distDir\AI Whisper.exe"
             Write-Host "zip: dist\$zipName"
         } else {

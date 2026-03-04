@@ -64,6 +64,8 @@ Copy-Item "$srcDir\*" $stagingDir -Recurse -Force
 Start-Sleep -Seconds 5
 Compress-Archive -Path $stagingDir -DestinationPath "$workspace\dist\$zipName" -Force
 Remove-Item $stagingParent -Recurse -Force -ErrorAction SilentlyContinue
+# zip 只保留最近 3 個，其餘刪除
+Get-ChildItem "$workspace\dist\AI Whisper_*.zip" | Sort-Object LastWriteTime -Descending | Select-Object -Skip 3 | Remove-Item -Force
 ```
 
 ### 7. 啟動打包後的 exe
@@ -74,6 +76,7 @@ Start-Process "f:\Cursor\AI Whisper\dist\AI Whisper\AI Whisper.exe"
 
 ### 8. 完成後告知使用者
 - zip 路徑：`dist/AI Whisper_yyyyMMdd_HHmm.zip`
+- `dist/` 底下的 zip 只保留最近 3 個，其餘自動刪除
 - 傳給同事，解壓後直接執行 `AI Whisper.exe`
 - 首次執行需在設定頁輸入 API Key
 

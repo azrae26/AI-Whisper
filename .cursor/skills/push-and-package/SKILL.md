@@ -57,6 +57,10 @@ git -C "d:\Cursor\AI Whisper" diff
 - **推**：腳本輸出「推完成 (Xs)」，AI 立即回覆
 - **包**：背景繼續，zip 產於 `dist/AI Whisper_yyyyMMdd_HHmm.zip`，exe 自動啟動
 
+## zip 保留策略
+
+`dist/` 底下的 `AI Whisper_*.zip` 只保留**最近 3 個**（依 LastWriteTime 排序），其餘自動刪除，避免累積過多舊版本。
+
 ## 注意事項
 
 - `deploy.ps1` 已加入 `.gitignore` 排除清單（若不想推送的話）或直接提交
