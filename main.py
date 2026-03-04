@@ -906,11 +906,41 @@ class App(ctk.CTk):
         except Exception:
             pass
 
+        # 移除先前為 insert 特製的 hook（若有的話）
+        comma_hook_remove = getattr(self, '_comma_hook_remove', None)
+        if comma_hook_remove:
+            try:
+                comma_hook_remove()
+            except Exception:
+                pass
+            self._comma_hook_remove = None
+
         hotkey = self._cfg.get('hotkey', 'alt+`')
         hotkey_comma = self._cfg.get('hotkey_comma', 'insert')
         try:
             keyboard.add_hotkey(hotkey, lambda: self.after(0, lambda: self._toggle_recording('。')))  # type: ignore[arg-type]
-            keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
+
+            # Insert 與小鍵盤 0 共用 scan code 82，add_hotkey 無法區分。改用手動 hook 檢查 event.name。
+            parts = [p.strip().lower() for p in hotkey_comma.split('+')]
+            mods = [p for p in parts if p in self._MODIFIERS]
+            main_key = next((p for p in reversed(parts) if p not in self._MODIFIERS), None)
+            use_insert_hook = main_key == 'insert'
+
+            if use_insert_hook:
+                def _on_insert_hook(event):
+                    if event.event_type != keyboard.KEY_DOWN:
+                        return
+                    # 僅響應 event.name == 'insert'，排除小鍵盤 0（name 為 '0'）
+                    if event.name and event.name.lower() != 'insert':
+                        return
+                    if not all(keyboard.is_pressed(m) for m in mods):
+                        return
+                    self.after(0, lambda: self._toggle_recording('，'))
+
+                self._comma_hook_remove = keyboard.hook(_on_insert_hook)
+            else:
+                keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
+
             _debug_print(f'[main][{now_str()}] ✅ 快捷鍵 {hotkey}（句號）、{hotkey_comma}（逗號）已註冊')
         except Exception as e:
             _debug_print(f'[main][{now_str()}] ❌ 快捷鍵註冊失敗: {e}')
