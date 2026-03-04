@@ -38,7 +38,13 @@ $zipName = "AI Whisper_$timestamp.zip"
 Compress-Archive -Path "f:\Cursor\AI Whisper\dist\AI Whisper" -DestinationPath "f:\Cursor\AI Whisper\dist\$zipName" -Force
 ```
 
-### 5. 完成後告知使用者
+### 5. 啟動打包後的 exe
+```powershell
+Start-Process "f:\Cursor\AI Whisper\dist\AI Whisper\AI Whisper.exe"
+```
+執行時直接啟動 `dist\AI Whisper\AI Whisper.exe`，不要用 `py main.py`。
+
+### 6. 完成後告知使用者
 - zip 路徑：`dist/AI Whisper_yyyyMMdd_HHmm.zip`
 - 傳給同事，解壓後直接執行 `AI Whisper.exe`
 - 首次執行需在設定頁輸入 API Key

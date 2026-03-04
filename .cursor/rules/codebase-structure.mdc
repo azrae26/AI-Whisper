@@ -1,0 +1,58 @@
+---
+description: AI Whisper 各檔案功能與職責，修改時依此定位，減少搜尋
+globs: "**/*"
+alwaysApply: false
+---
+
+# AI Whisper 檔案功能對照表
+
+修改程式時，依功能對照下表快速定位，不需重新搜尋。
+
+## ⚠️ 必遵規則
+
+**任一檔案的「功能」或「職責」有變動時，必須同步更新本 mdc 的對照表與資料流簡圖。**  
+不更新會導致後續修改時定位錯誤，增加搜尋成本。
+
+## Python 模組
+
+| 檔案 | 功能 | 職責摘要 | 修改時機 |
+|------|------|----------|----------|
+| `main.py` | 主程式 | UI（主頁/設定頁）、系統列常駐、全域快捷鍵、錄音與辨識流程協調、歷史記憶 Alt+Shift+1~5 | 改 UI、快捷鍵邏輯、流程、整合各模組 |
+| `paster.py` | 自動貼上 | 剪貼簿寫入、延遲後 Ctrl+V 貼到游標；游標在文字最後時自動補句號/逗號；UIA 偵測焦點控件 | 改貼上邏輯、游標偵測、延遲、COM 初始化 |
+| `recorder.py` | 麥克風錄音 | sounddevice 串流錄音、WAV 輸出、VAD 分段、即時波形、分段送出 | 改錄音參數、VAD、分段閾值 |
+| `transcriber.py` | 語音辨識 | OpenAI Whisper API、繁簡轉換、異體字校正（臺→台、機臺→機台 等） | 改 API 呼叫、模型、字體替換表 `_POST_CORRECTIONS` |
+| `settings.py` | 設定管理 | 讀寫 config.json、開機啟動登錄、API Key、快捷鍵、視窗位置 | 改設定項目、儲存格式、登錄機碼 |
+| `waveform.py` | 錄音波形視窗 | 錄音時螢幕底部即時波形、辨識時脈衝文字、GDI 繪製、透明視窗 | 改波形樣式、位置、動畫 |
+
+## 設定與資源
+
+| 檔案 | 功能 | 說明 |
+|------|------|------|
+| `config.json` | 使用者設定 | 執行時產生於 exe/script 同目錄，含 API Key、快捷鍵、模型、幾何 |
+| `version_info.txt` | exe 版本資訊 | PyInstaller 打包用，版號與產品名稱 |
+| `requirements.txt` | Python 依賴 | pip install -r 用 |
+| `assets/` | 圖示資源 | icon.ico、icon_256.png 等 |
+
+## .cursor 規則與技能
+
+| 檔案 | 功能 |
+|------|------|
+| `.cursor/rules/dev-workflow.mdc` | 開發流程：重啟流程、LOG 監控、程式碼品質 |
+| `.cursor/rules/codebase-structure.mdc` | 本檔：各檔案功能對照 |
+| `.cursor/skills/build-and-package/SKILL.md` | 打包流程：venv、PyInstaller、zip 產出、完成後啟動 dist 內 exe |
+
+## 資料流簡圖
+
+```
+快捷鍵 → main.py (_toggle_recording)
+           ↓
+recorder.py (錄音) → WAV bytes
+           ↓
+transcriber.py (API 辨識) → 文字 + 異體字校正
+           ↓
+main.py (_run_transcribe / _run_segment_transcribe)
+           ↓
+paster.py (paste_text) → 剪貼簿 + Ctrl+V
+```
+
+波形：recorder 錄音時 → waveform 顯示；main 控制顯示時機。
