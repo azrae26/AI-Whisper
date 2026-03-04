@@ -664,15 +664,16 @@ class App(ctk.CTk):
         threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
 
     def _check_segment(self):
-        """每 200ms 檢查是否達到自動分段條件（累積 >= 18s 且靜音 >= 1s）"""
+        """每 200ms 檢查是否達到自動分段條件（累積 >= 18s 且靜音 >= 1s，或靜音 >= 3s 立即送出）"""
         if self._state != 'recording':
             return
         accumulated = recorder.get_accumulated_seconds()
         silence = recorder.get_silence_seconds()
-        if accumulated >= 18.0 and silence >= 1.0:
+        if (accumulated >= 18.0 and silence >= 1.0) or silence >= 3.0:
             wav_bytes = recorder.flush_segment()
             if wav_bytes:
-                _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
+                reason = '累積夠長+短靜音' if (accumulated >= 18.0 and silence >= 1.0) else '靜音達3s'
+                _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（{reason}，累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
                 paster.prefetch_cursor_position(len(wav_bytes))
                 threading.Thread(
                     target=self._run_segment_transcribe, args=(wav_bytes,), daemon=True
