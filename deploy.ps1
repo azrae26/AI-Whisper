@@ -35,6 +35,7 @@ switch ($Role) {
 
     "build" {
         taskkill /F /IM "AI Whisper.exe" 2>$null
+        taskkill /F /IM python.exe 2>$null
         if (Test-Path "$distDir\config.json") { Copy-Item "$distDir\config.json" $configBak -Force }
         Set-Location $workspace
         & $python -m PyInstaller -y --onedir --windowed `

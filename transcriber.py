@@ -50,6 +50,7 @@ def transcribe(wav_bytes: bytes, api_key: str, model: str = 'gpt-4o-transcribe')
     呼叫 OpenAI Whisper API 辨識語音
     model 預設 gpt-4o-transcribe（最強），可改為 whisper-1 相容舊版
     指定 language='zh' 避免短句被誤判為其他語系；中文夾英文單字仍可正確辨識
+    如果我說日期請用數字表示，不要用中文表示，例如：2026年3月4日、或24年
     """
     client = OpenAI(api_key=api_key)
 

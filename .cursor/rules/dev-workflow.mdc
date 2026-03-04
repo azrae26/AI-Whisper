@@ -17,7 +17,7 @@ globs: "**/*.py"
 ### Step 1：終止舊程序並重啟（block_until_ms: 0 立刻背景化）
 
 ```powershell
-taskkill /F /IM python.exe 2>$null; Start-Sleep -Seconds 1; py -u main.py
+taskkill /F /IM python.exe 2>$null; taskkill /F /IM "AI Whisper.exe" 2>$null; Start-Sleep -Seconds 1; py -u main.py
 ```
 
 **重要參數：**

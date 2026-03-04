@@ -70,8 +70,27 @@ def _init_clipboard_api():
 _init_clipboard_api()
 
 
+# 剪貼簿格式中屬於 GDI 物件的 handle，不可使用 GlobalLock，需排除
+_CLIPBOARD_GDI_FORMATS = {
+    2,   # CF_BITMAP
+    3,   # CF_METAFILEPICT
+    9,   # CF_PALETTE
+    14,  # CF_ENHMETAFILE
+}
+
+
+def _is_hglobal_format(fmt: int) -> bool:
+    """判斷此剪貼簿格式的 handle 是否為 HGLOBAL（可安全使用 GlobalLock）"""
+    if fmt in _CLIPBOARD_GDI_FORMATS:
+        return False
+    # GDI 物件範圍 0x0300–0x03FF 也不是 HGLOBAL
+    if 0x0300 <= fmt <= 0x03FF:
+        return False
+    return True
+
+
 def _save_clipboard_all() -> list[tuple[int, bytes]] | None:
-    """備份剪貼簿所有格式的原始資料，回傳 [(format, bytes), ...] 或 None"""
+    """備份剪貼簿所有 HGLOBAL 格式的原始資料，回傳 [(format, bytes), ...] 或 None"""
     user32   = ctypes.windll.user32    # type: ignore[attr-defined]
     kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
     if not user32.OpenClipboard(0):
@@ -80,15 +99,17 @@ def _save_clipboard_all() -> list[tuple[int, bytes]] | None:
         items: list[tuple[int, bytes]] = []
         fmt = user32.EnumClipboardFormats(0)
         while fmt:
-            h = user32.GetClipboardData(fmt)
-            if h:
-                ptr = kernel32.GlobalLock(h)
-                if ptr:
-                    try:
-                        size = kernel32.GlobalSize(h)
-                        items.append((fmt, ctypes.string_at(ptr, size)))
-                    finally:
-                        kernel32.GlobalUnlock(h)
+            if _is_hglobal_format(fmt):
+                h = user32.GetClipboardData(fmt)
+                if h:
+                    ptr = kernel32.GlobalLock(h)
+                    if ptr:
+                        try:
+                            size = kernel32.GlobalSize(h)
+                            if size > 0:
+                                items.append((fmt, ctypes.string_at(ptr, size)))
+                        finally:
+                            kernel32.GlobalUnlock(h)
             fmt = user32.EnumClipboardFormats(fmt)
         return items if items else None
     except Exception as e:
