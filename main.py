@@ -1014,8 +1014,11 @@ class App(ctk.CTk):
                 def _on_insert_hook(event):
                     if event.event_type != keyboard.KEY_DOWN:
                         return
-                    # 僅響應 event.name == 'insert'，排除小鍵盤 0（name 為 '0'）
+                    # 僅響應 Insert 鍵，排除小鍵盤 0（共用 scan code 82）
+                    # 外接數字鍵盤的 0 在部分驅動下 name 也可能報 'insert'，需加 is_keypad 區分
                     if event.name and event.name.lower() != 'insert':
+                        return
+                    if getattr(event, 'is_keypad', False):
                         return
                     if not all(keyboard.is_pressed(m) for m in mods):
                         return
