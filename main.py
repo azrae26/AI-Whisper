@@ -929,12 +929,15 @@ class App(ctk.CTk):
         self.after(INTERVAL, lambda: self._animate_mic_up(step + 1))
 
     def _set_result(self, text: str):
+        is_first = not self._history
         self._history.insert(0, text)
         self._history = self._history[:10]
-        self._render_history()
+        if is_first:
+            self._render_history()
+        else:
+            self._add_history_card(text)
 
     def _render_history(self):
-        font_family = "Microsoft JhengHei UI"
         for w in self._history_widgets:
             w.destroy()
         self._history_widgets.clear()
@@ -944,29 +947,56 @@ class App(ctk.CTk):
             self._animate_mic_up()
 
         for i, item in enumerate(self._history):
-            card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
-            card.grid(row=i, column=0, sticky='ew', pady=(0, 8))
-            card.grid_columnconfigure(0, weight=1)
-            card.grid_columnconfigure(1, weight=0)
-
             text_color = '#F4F4F5' if i == 0 else '#A1A1AA'
-            label = ctk.CTkLabel(
-                card, text=item, wraplength=270, justify='left',
-                font=ctk.CTkFont(family=font_family, size=14),
-                text_color=text_color, anchor='w',
-            )
-            label.grid(row=0, column=0, sticky='nsew', padx=(14, 4), pady=8)
-
-            idx = i
-            btn = ctk.CTkButton(
-                card, text='複製', width=52, height=28, corner_radius=6,
-                fg_color='#3F3F46', hover_color='#52525B',
-                font=ctk.CTkFont(family=font_family, size=13),
-                command=lambda idx=idx: self._copy_history(idx),
-            )
-            btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=8)
-
+            card = self._build_history_card(item, text_color)
+            card.grid(row=i, column=0, sticky='ew', pady=(0, 8))
             self._history_widgets.append(card)
+
+    def _build_history_card(self, text: str, text_color: str) -> ctk.CTkFrame:
+        """建立單張歷史記錄卡片（不加入 grid，由呼叫端負責排版）"""
+        font_family = "Microsoft JhengHei UI"
+        card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_columnconfigure(1, weight=0)
+        label = ctk.CTkLabel(
+            card, text=text, wraplength=270, justify='left',
+            font=ctk.CTkFont(family=font_family, size=14),
+            text_color=text_color, anchor='w',
+        )
+        label.grid(row=0, column=0, sticky='nsew', padx=(14, 4), pady=8)
+        btn = ctk.CTkButton(
+            card, text='複製', width=52, height=28, corner_radius=6,
+            fg_color='#3F3F46', hover_color='#52525B',
+            font=ctk.CTkFont(family=font_family, size=13),
+            command=lambda c=card: self._copy_history_card(c),
+        )
+        btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=8)
+        return card
+
+    def _add_history_card(self, text: str):
+        """增量插入新卡片至頂部，現有卡片往下移"""
+        # 舊第一筆改為暗色
+        if self._history_widgets:
+            children = self._history_widgets[0].winfo_children()
+            if children:
+                children[0].configure(text_color='#A1A1AA')
+        # 現有卡片全部往下移一格
+        for i, card in enumerate(self._history_widgets):
+            card.grid(row=i + 1)
+        # 超出 10 筆：直接移除最後一張
+        if len(self._history_widgets) >= 10:
+            self._history_widgets.pop().destroy()
+        # 建立新卡片，插入 list 最前面，直接顯示於 row 0
+        new_card = self._build_history_card(text, '#F4F4F5')
+        self._history_widgets.insert(0, new_card)
+        new_card.grid(row=0, column=0, sticky='ew', pady=(0, 8))
+
+    def _copy_history_card(self, card: ctk.CTkFrame):
+        """動態查找卡片位置後複製對應歷史記錄"""
+        try:
+            self._copy_history(self._history_widgets.index(card))
+        except ValueError:
+            pass
 
     def _copy_history(self, idx: int):
         if idx < len(self._history):

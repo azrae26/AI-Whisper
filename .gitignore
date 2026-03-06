@@ -1,5 +1,6 @@
 config.json
 config.json.pack.bak
+pyrightconfig.json
 __pycache__/
 *.pyc
 *.pyo
