@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>產品線營收分析表</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Microsoft JhengHei", sans-serif; padding: 16px; font-size: 13px; }
+    table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    th, td { border: 1px solid #333; padding: 6px 10px; vertical-align: top; }
+    th { background: #2a2a2a; color: #fff; font-weight: 600; word-break: break-word; overflow-wrap: break-word; }
+    td { line-height: 1.3; word-break: break-word; overflow-wrap: break-word; }
+    .row-n { background: #f9f9f9; }
+    .row-n:nth-child(even) { background: #fff; }
+  </style>
+</head>
+<body>
+  <table id="dataTable">
+    <colgroup id="colGroup"></colgroup>
+    <thead>
+      <tr>
+        <th>產品線</th>
+        <th>目前營收比重 & 走勢</th>
+        <th>對公司重要程度</th>
+        <th>核心評語</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="row-n">
+        <td>車用</td>
+        <td>約 50%～56%，2025 年小幅衰退，2026 年回穩微成長（2025-11-11、2026-02-04 非公開）</td>
+        <td>極高（現金牛＋規模基礎）</td>
+        <td>穩定但毛利較低，公司刻意壓低比重、把資源讓給高毛利產品。</td>
+      </tr>
+      <tr>
+        <td>醫療</td>
+        <td>2025 年佔比約 10～11%，年增約 20～38%，2026 年預估再成長 30～50%（同上）</td>
+        <td>極高（高毛利＋長線成長）</td>
+        <td>高毛利、客戶含 Medtronic 等大廠，訂單能見度長，是中長期獲利關鍵。</td>
+      </tr>
+      <tr class="row-n">
+        <td>半導體+AI伺服器液冷UQD</td>
+        <td>2025 年佔比約 15%，年增近 200%，2026 年看 20% 以上（同上）</td>
+        <td>極高（成長主軸）</td>
+        <td>AI 伺服器水冷 UQD 與半導體設備零件成為公司最關鍵的新成長引擎，伺服器產能已供不應求。</td>
+      </tr>
+      <tr>
+        <td>電子（HDD 等）</td>
+        <td>佔比約 13～16%，2025 年高檔修正，2026 年預估持平到小幅成長（同上）</td>
+        <td>中等（穩定但非主軸）</td>
+        <td>跟 AI 伺服器儲存需求連動，波動較大但整體毛利優於車用。</td>
+      </tr>
+      <tr class="row-n">
+        <td>運動</td>
+        <td>佔比約 6～9%，2025 年大幅衰退，2026 年預估止跌回穩（同上）</td>
+        <td>低～中（邊緣事業）</td>
+        <td>毛利較低，需求循環大，目前偏「體質改善」而非成長主軸。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="margin-top:12px; font-size:11px; color:#666;">資料來源：非公開資料（2025-11-11、2026-02-04） | Debug: <a href="?debug=1">?debug=1</a></p>
+  <div id="tableDebugLog" style="display:none; margin-top:16px; padding:12px; background:#1e1e1e; color:#d4d4d4; font-family:Consolas,monospace; font-size:11px; max-height:320px; overflow:auto; border-radius:4px;"></div>
+
+  <script>
+    var DEBUG = !!location.search.match(/[?&]debug=1/);
+    function log(msg) {
+      if (!DEBUG) return;
+      var el = document.getElementById('tableDebugLog');
+      if (el) { el.style.display = 'block'; el.innerHTML += msg + '<br>'; }
+    }
+
+    /**
+     * 通用演算法：binary search 最小化每列行數，適用任何 #dataTable + #colGroup 的表格。
+     * 優化：① 量自然寬(1 reflow)作為 binary search 初始上界
+     *       ② 估算起始 k，跳過明顯放不下的 k 值
+     *       ③ 每個 k 的結果作為下一個 k 的上界，大幅縮小搜尋範圍
+     */
+    function calcMinLineWidths() {
+      if (DEBUG) { var d = document.getElementById('tableDebugLog'); if (d) d.innerHTML = ''; }
+      var table = document.getElementById('dataTable');
+      var colGroup = document.getElementById('colGroup');
+      if (!table || !colGroup) return;
+
+      var allRows = [].slice.call(table.querySelectorAll('thead tr, tbody tr'));
+      var colCount = allRows[0] ? allRows[0].cells.length : 0;
+      var rowCount = allRows.length;
+      if (!colCount || !rowCount) return;
+
+      /* 可用表格寬度 */
+      var par = table.parentElement || document.body;
+      var pcs = window.getComputedStyle(par);
+      var tableW = par.offsetWidth
+        - (parseFloat(pcs.paddingLeft) || 0)
+        - (parseFloat(pcs.paddingRight) || 0)
+        - (colCount + 1);
+
+      var FLOOR = 50;
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'position:fixed;top:0;left:-99999px;visibility:hidden;pointer-events:none;';
+      document.body.appendChild(wrap);
+
+      /* 建立 probe：inline-block + nowrap 讓 offsetWidth = 自然單行寬；
+         同時快取 padV、lhPx、whiteSpace，省去第二輪 getComputedStyle */
+      var probes = [], padV = [], lhPx = [], cellWS = [];
+      for (var c = 0; c < colCount; c++) {
+        probes[c] = []; padV[c] = []; lhPx[c] = []; cellWS[c] = [];
+        for (var r = 0; r < rowCount; r++) {
+          var cell = allRows[r].cells[c];
+          var cs = window.getComputedStyle(cell);
+          var lh = parseFloat(cs.lineHeight);
+          padV[c][r] = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+          lhPx[c][r] = isNaN(lh) ? parseFloat(cs.fontSize) * 1.3 : lh;
+          cellWS[c][r] = cs.whiteSpace;
+          var div = document.createElement('div');
+          div.style.cssText = 'display:inline-block;box-sizing:border-box;white-space:nowrap;word-break:break-word;overflow-wrap:break-word;';
+          div.style.fontFamily = cs.fontFamily; div.style.fontSize = cs.fontSize;
+          div.style.fontWeight = cs.fontWeight; div.style.lineHeight = cs.lineHeight;
+          div.style.paddingTop = cs.paddingTop; div.style.paddingBottom = cs.paddingBottom;
+          div.style.paddingLeft = cs.paddingLeft; div.style.paddingRight = cs.paddingRight;
+          div.textContent = cell.textContent.trim();
+          wrap.appendChild(div);
+          probes[c][r] = div;
+        }
+      }
+
+      /* 量自然寬（單行）— 1 次 reflow；同時作為 binary search 的初始上界 */
+      wrap.offsetHeight;
+      var natW = [];
+      for (var c = 0; c < colCount; c++) {
+        natW[c] = FLOOR;
+        for (var r = 0; r < rowCount; r++)
+          if (probes[c][r].offsetWidth > natW[c]) natW[c] = probes[c][r].offsetWidth;
+      }
+      log('natW: [' + natW.map(Math.round).join(',') + '] tableW=' + Math.round(tableW));
+
+      /* 切換 probe 為 block + 真實換行模式 */
+      for (var c = 0; c < colCount; c++)
+        for (var r = 0; r < rowCount; r++) {
+          probes[c][r].style.display = 'block';
+          probes[c][r].style.whiteSpace = cellWS[c][r];
+        }
+
+      /* 欄 c 在寬度 w(px) 下的最大行數；水平溢出視為 9999 */
+      function colLines(c, w) {
+        for (var r = 0; r < rowCount; r++) probes[c][r].style.width = w + 'px';
+        wrap.offsetHeight;
+        for (var max = 1, r = 0; r < rowCount; r++) {
+          var p = probes[c][r];
+          if (p.scrollWidth > p.offsetWidth + 1) return 9999;
+          var l = Math.max(1, Math.round((p.scrollHeight - padV[c][r]) / lhPx[c][r]));
+          if (l > max) max = l;
+        }
+        return max;
+      }
+
+      /* Binary search：欄 c ≤ k 行的最小 px，hi 由外部傳入（逐步縮緊） */
+      function minPx(c, k, hi) {
+        if (colLines(c, hi) > k) return hi;
+        if (colLines(c, FLOOR) <= k) return FLOOR;
+        for (var lo = FLOOR; hi - lo > 2;) {
+          var mid = (lo + hi) >> 1;
+          if (colLines(c, mid) <= k) hi = mid; else lo = mid;
+        }
+        return hi;
+      }
+
+      /* 從估算的 kMin 起跳，每個 k 的結果作為下一個 k 的上界 */
+      var sumN = natW.reduce(function (a, b) { return a + b; }, 0);
+      var kMin = Math.max(1, Math.ceil(sumN / tableW));
+      var bounds = natW.slice(); /* 初始上界 = 自然寬，遠比 tableW*0.8 更緊 */
+      var finalPx = null;
+      for (var k = kMin; k <= 10; k++) {
+        var ws = [], sum = 0;
+        for (var c = 0; c < colCount; c++) {
+          var w = minPx(c, k, bounds[c]);
+          ws.push(w); sum += w;
+          bounds[c] = w; /* 下一個 k 的上界 = 本次結果，範圍只會縮小 */
+        }
+        log('k=' + k + ' [' + ws.map(Math.round).join('+') + ']=' + Math.round(sum) + '/' + Math.round(tableW));
+        if (sum <= tableW || k === 10) { finalPx = ws; break; }
+      }
+
+      document.body.removeChild(wrap);
+
+      var tot = finalPx.reduce(function (a, b) { return a + b; }, 0);
+      colGroup.innerHTML = '';
+      for (var c = 0; c < colCount; c++) {
+        var col = document.createElement('col');
+        col.style.width = ((finalPx[c] / tot) * 100).toFixed(1) + '%';
+        colGroup.appendChild(col);
+      }
+      log('Final: ' + [].map.call(colGroup.querySelectorAll('col'), function (c) { return c.style.width; }).join(', '));
+    }
+
+    calcMinLineWidths();
+    window.addEventListener('resize', function () {
+      clearTimeout(window._tableResizeTm);
+      window._tableResizeTm = setTimeout(calcMinLineWidths, 100);
+    });
+  </script>
+</body>
+</html>

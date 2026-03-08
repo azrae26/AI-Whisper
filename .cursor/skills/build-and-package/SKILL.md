@@ -38,7 +38,9 @@ $workspace = "f:\Cursor\AI Whisper"
 $python = "$workspace\.venv-pack\Scripts\python.exe"
 $ctkPath = "$workspace\.venv-pack\Lib\site-packages\customtkinter"
 cd $workspace
-& $python -m PyInstaller -y --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --add-data "$ctkPath;customtkinter" --version-file version_info.txt --hidden-import tkinter --hidden-import tkinter.ttk --hidden-import tkinter.messagebox --hidden-import _tkinter main.py
+$tcl = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\tcl\tcl8.6"
+$tk  = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\tcl\tk8.6"
+& $python -m PyInstaller -y --onedir --windowed --icon=assets/icon.ico --name="AI Whisper" --add-data "assets;assets" --add-data "$ctkPath;customtkinter" --add-data "${tcl};_tcl_data" --add-data "${tk};_tk_data" --version-file version_info.txt --collect-all tkinter --hidden-import _tkinter main.py
 ```
 CustomTkinter 含 .json 等資料檔，PyInstaller 不會自動打包，需手動 `--add-data`（參見 [CustomTkinter Packaging](https://github.com/TomSchimansky/CustomTkinter/wiki/Packaging#windows-pyinstaller-auto-py-to-exe)）。
 
