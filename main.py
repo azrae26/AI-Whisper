@@ -45,6 +45,11 @@ else:
     ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 ICON_PATH = os.path.join(ASSETS_DIR, 'icon_256.png')
 
+# ── 自動分段參數 ──────────────────────────────────────────────────────────────
+AUTO_SEGMENT_MAX_ACCUM_SEC = 18.0   # 累積超過此長度後，短靜音即觸發送出
+AUTO_SEGMENT_SHORT_SILENCE_SEC = 1.0  # 搭配累積夠長時的靜音門檻
+AUTO_SEGMENT_SILENCE_SEC = 2.0      # 靜音超過此秒數直接送出
+
 # ── 全域狀態 ──────────────────────────────────────────────────────────────────
 recorder = rec_module.Recorder()
 _hotkey_handle = None  # keyboard hook handle
@@ -741,15 +746,15 @@ class App(ctk.CTk):
         threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
 
     def _check_segment(self):
-        """每 200ms 檢查是否達到自動分段條件（累積 >= 18s 且靜音 >= 1s，或靜音 >= 3s 立即送出）"""
+        """每 200ms 檢查是否達到自動分段條件（累積 >= AUTO_SEGMENT_MAX_ACCUM_SEC 且靜音 >= AUTO_SEGMENT_SHORT_SILENCE_SEC，或靜音 >= AUTO_SEGMENT_SILENCE_SEC 立即送出）"""
         if self._state != 'recording':
             return
         accumulated = recorder.get_accumulated_seconds()
         silence = recorder.get_silence_seconds()
-        if (accumulated >= 18.0 and silence >= 1.0) or silence >= 3.0:
+        if (accumulated >= AUTO_SEGMENT_MAX_ACCUM_SEC and silence >= AUTO_SEGMENT_SHORT_SILENCE_SEC) or silence >= AUTO_SEGMENT_SILENCE_SEC:
             wav_bytes = recorder.flush_segment()
             if wav_bytes:
-                reason = '累積夠長+短靜音' if (accumulated >= 18.0 and silence >= 1.0) else '靜音達3s'
+                reason = '累積夠長+短靜音' if (accumulated >= AUTO_SEGMENT_MAX_ACCUM_SEC and silence >= AUTO_SEGMENT_SHORT_SILENCE_SEC) else f'靜音達{AUTO_SEGMENT_SILENCE_SEC:.0f}s'
                 _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（{reason}，累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
                 paster.prefetch_cursor_position(len(wav_bytes))
                 threading.Thread(
@@ -1065,6 +1070,14 @@ class App(ctk.CTk):
                     name = event.name.lower() if event.name else ''
                     if not name:
                         return
+                    # DEBUG：記錄所有 KEY_DOWN 事件
+                    try:
+                        import pathlib
+                        _log = pathlib.Path(__file__).parent / 'key_debug.log'
+                        with open(_log, 'a', encoding='utf-8') as _f:
+                            _f.write(f'name={event.name!r} scan={getattr(event,"scan_code",None)} is_keypad={getattr(event,"is_keypad",None)} flags={getattr(event,"flags",None)}\n')
+                    except Exception:
+                        pass
                     for mods, expected_name, punct in _triggers:
                         if name == expected_name and all(keyboard.is_pressed(m) for m in mods):
                             p = punct
