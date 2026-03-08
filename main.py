@@ -1041,30 +1041,32 @@ class App(ctk.CTk):
             hk_mods, hk_main = _parse_hk(hotkey)
             hc_mods, hc_main = _parse_hk(hotkey_comma)
 
-            # Insert 與小鍵盤 0 共用 scan code 82，add_hotkey 無法區分。
-            # 凡 main_key == 'insert' 的快捷鍵，改用 keyboard.hook 檢查 event.name，
-            # 排除小鍵盤 0（Num Lock ON 時 event.name 為 '0'）。
-            insert_triggers = []  # list of (mods, punct)
+            # 部分按鍵因 scan code 與其他鍵相同，add_hotkey 會誤觸：
+            #   insert  (scan 82) ← 小鍵盤 0（NumLock OFF 時）
+            #   pause   (scan 69) ← NumLock（兩者 scan code 皆為 69）
+            # 凡 main_key 屬於這些鍵，改用 keyboard.hook 檢查 event.name 精確匹配。
+            _NAME_HOOK_KEYS = {'insert', 'pause'}
+            name_triggers = []  # list of (mods, expected_name, punct)
 
-            if hk_main == 'insert':
-                insert_triggers.append((hk_mods, '。'))
+            if hk_main in _NAME_HOOK_KEYS:
+                name_triggers.append((hk_mods, hk_main, '。'))
             else:
                 keyboard.add_hotkey(hotkey, lambda: self.after(0, lambda: self._toggle_recording('。')))  # type: ignore[arg-type]
 
-            if hc_main == 'insert':
-                insert_triggers.append((hc_mods, '，'))
+            if hc_main in _NAME_HOOK_KEYS:
+                name_triggers.append((hc_mods, hc_main, '，'))
             else:
                 keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
 
-            if insert_triggers:
-                def _on_insert_hook(event, _triggers=insert_triggers):
+            if name_triggers:
+                def _on_insert_hook(event, _triggers=name_triggers):
                     if event.event_type != keyboard.KEY_DOWN:
                         return
-                    # 僅響應 event.name == 'insert'，排除小鍵盤 0（name 為 '0'）
-                    if event.name and event.name.lower() != 'insert':
+                    name = event.name.lower() if event.name else ''
+                    if not name:
                         return
-                    for mods, punct in _triggers:
-                        if all(keyboard.is_pressed(m) for m in mods):
+                    for mods, expected_name, punct in _triggers:
+                        if name == expected_name and all(keyboard.is_pressed(m) for m in mods):
                             p = punct
                             self.after(0, lambda p=p: self._toggle_recording(p))
                             break
