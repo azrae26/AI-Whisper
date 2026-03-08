@@ -59,6 +59,23 @@ def now_str() -> str:
     return datetime.datetime.now().strftime('%H:%M:%S')
 
 
+def _apply_segment_settings(cfg: dict) -> None:
+    """將 config 中的自動分段秒數寫回全域常數，讓 _check_segment 即時生效"""
+    global AUTO_SEGMENT_SILENCE_SEC, AUTO_SEGMENT_MAX_ACCUM_SEC, AUTO_SEGMENT_SHORT_SILENCE_SEC
+    try:
+        AUTO_SEGMENT_SILENCE_SEC = float(cfg.get('segment_silence', AUTO_SEGMENT_SILENCE_SEC))
+    except (TypeError, ValueError):
+        pass
+    try:
+        AUTO_SEGMENT_MAX_ACCUM_SEC = float(cfg.get('segment_max_accum', AUTO_SEGMENT_MAX_ACCUM_SEC))
+    except (TypeError, ValueError):
+        pass
+    try:
+        AUTO_SEGMENT_SHORT_SILENCE_SEC = float(cfg.get('segment_short_silence', AUTO_SEGMENT_SHORT_SILENCE_SEC))
+    except (TypeError, ValueError):
+        pass
+
+
 def _debug_print(msg: str):
     """輸出 debug 訊息，Windows cp950 無法顯示 emoji 時自動降級"""
     try:
@@ -124,6 +141,7 @@ class App(ctk.CTk):
 
         # 讀取設定
         self._cfg = settings.get()
+        _apply_segment_settings(self._cfg)
 
         # 狀態
         self._state = 'idle'  # idle | recording | processing
@@ -379,6 +397,52 @@ class App(ctk.CTk):
             onvalue=True, offvalue=False,
             progress_color='#2563EB'
         ).pack(side='left')
+
+        # ── 1b. 自動分段設定
+        add_label('自動分段設定')
+        row += 1
+
+        ctk.CTkLabel(
+            scroll,
+            text='靜音超過「送出門檻」秒後自動辨識；累積超過「最長累積」時，只要靜音達「短靜音門檻」即觸發',
+            font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
+            wraplength=300, justify='left',
+        ).grid(row=row, column=0, sticky='w', pady=(0, 8))
+        row += 1
+
+        seg_frame = ctk.CTkFrame(scroll, fg_color='transparent')
+        seg_frame.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        seg_frame.grid_columnconfigure(0, weight=1)
+        row += 1
+
+        _seg_fields = [
+            ('送出門檻（秒）', 'segment_silence', AUTO_SEGMENT_SILENCE_SEC),
+            ('最長累積（秒）', 'segment_max_accum', AUTO_SEGMENT_MAX_ACCUM_SEC),
+            ('短靜音門檻（秒）', 'segment_short_silence', AUTO_SEGMENT_SHORT_SILENCE_SEC),
+        ]
+        self._segment_vars: dict[str, ctk.StringVar] = {}
+        for i, (label_text, key, default) in enumerate(_seg_fields):
+            row_frame = ctk.CTkFrame(seg_frame, fg_color='transparent')
+            row_frame.grid(row=i, column=0, sticky='ew', pady=(0, 6))
+            row_frame.grid_columnconfigure(0, weight=1)
+
+            ctk.CTkLabel(
+                row_frame, text=label_text,
+                font=ctk.CTkFont(family=font_family, size=13),
+                text_color='#A1A1AA', anchor='w',
+            ).grid(row=0, column=0, sticky='w')
+
+            var = ctk.StringVar(value=str(self._cfg.get(key, default)))
+            self._segment_vars[key] = var
+            entry = ctk.CTkEntry(
+                row_frame, textvariable=var,
+                height=36, width=90,
+                font=ctk.CTkFont(family=font_family, size=14),
+                fg_color='#27272A', border_color='#3F3F46',
+                justify='center',
+            )
+            entry.grid(row=0, column=1, sticky='e')
+            entry.bind('<FocusOut>', lambda e: self._auto_save())
 
         # ── 2. 識別快捷鍵（自動加句號）
         add_label('識別快捷鍵（自動加句號）')
@@ -669,9 +733,17 @@ class App(ctk.CTk):
         )
         self._auto_save()
 
+    def _safe_float(self, var: ctk.StringVar | None, fallback: float) -> float:
+        try:
+            v = float(var.get()) if var else fallback
+            return v if v > 0 else fallback
+        except (TypeError, ValueError):
+            return fallback
+
     def _auto_save(self):
         """設定變動時靜默自動儲存，不跳頁、不顯示訊息"""
         text_corrections_raw = self._text_correction_textbox.get('1.0', 'end')
+        seg = self._segment_vars
         new_cfg = {
             'apiKey': self._api_key_var.get().strip(),
             'model': self._model_var.get(),
@@ -680,9 +752,13 @@ class App(ctk.CTk):
             'history_hotkeys': [v.get().strip().lower() for v in self._history_hotkey_vars],
             'text_corrections': _parse_text_corrections(text_corrections_raw),
             'startup': self._startup_var.get(),
+            'segment_silence': self._safe_float(seg.get('segment_silence'), AUTO_SEGMENT_SILENCE_SEC),
+            'segment_max_accum': self._safe_float(seg.get('segment_max_accum'), AUTO_SEGMENT_MAX_ACCUM_SEC),
+            'segment_short_silence': self._safe_float(seg.get('segment_short_silence'), AUTO_SEGMENT_SHORT_SILENCE_SEC),
         }
         settings.save(new_cfg)
         settings.set_startup(new_cfg['startup'])
+        _apply_segment_settings(new_cfg)
         self._cfg = settings.get()
         self._register_hotkey()
         self._hotkey_label.configure(text=self._hotkey_display())

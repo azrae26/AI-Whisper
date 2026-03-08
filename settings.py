@@ -1,5 +1,5 @@
 # 功能：設定管理
-# 職責：讀寫 config.json（API Key、快捷鍵、加逗號快捷鍵、歷史識別快捷鍵、模型、文字校正、開機啟動、視窗位置）
+# 職責：讀寫 config.json（API Key、快捷鍵、加逗號快捷鍵、歷史識別快捷鍵、模型、文字校正、開機啟動、自動分段秒數、視窗位置）
 # 依賴：json, os, winreg, sys
 
 import json
@@ -32,6 +32,9 @@ DEFAULTS = {
     'model': 'gpt-4o-transcribe',
     'text_corrections': [],
     'startup': True,
+    'segment_silence': 2.0,
+    'segment_max_accum': 18.0,
+    'segment_short_silence': 1.0,
 }
 
 
