@@ -38,10 +38,14 @@ switch ($Role) {
         taskkill /F /IM python.exe 2>$null
         if (Test-Path "$distDir\config.json") { Copy-Item "$distDir\config.json" $configBak -Force }
         Set-Location $workspace
+        $tcl = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\tcl\tcl8.6"
+        $tk  = "C:\Users\Administrator\AppData\Local\Programs\Python\Python313\tcl\tk8.6"
         & $python -m PyInstaller -y --onedir --windowed `
             --icon=assets/icon.ico --name="AI Whisper" `
             --add-data "assets;assets" --add-data "$ctkPath;customtkinter" `
+            --add-data "${tcl};_tcl_data" --add-data "${tk};_tk_data" `
             --version-file version_info.txt `
+            --collect-all tkinter `
             --hidden-import tkinter --hidden-import tkinter.ttk `
             --hidden-import tkinter.messagebox --hidden-import _tkinter `
             main.py
