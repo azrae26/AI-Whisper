@@ -571,14 +571,10 @@ class App(ctk.CTk):
 
     def _show_main(self):
         self._page = 'main'
-        self._settings_frame.grid_remove()
-        self._main_frame.grid()
         self._main_frame.tkraise()
 
     def _show_settings(self):
         self._page = 'settings'
-        self._main_frame.grid_remove()
-        self._settings_frame.grid()
         self._settings_frame.tkraise()
 
     # ── 設定操作 ──────────────────────────────────────────────────────────────
@@ -935,46 +931,60 @@ class App(ctk.CTk):
 
     def _render_history(self):
         font_family = "Microsoft JhengHei UI"
-        for w in self._history_widgets:
-            w.destroy()
-        self._history_widgets.clear()
 
         # 首次出現歷史記錄時，觸發 mic 區塊向上滑動動畫
         if self._history and self._mic_centered:
             self._animate_mic_up()
 
-        for i, item in enumerate(self._history):
-            card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
-            card.grid(row=i, column=0, sticky='ew', pady=(0, 8))
-            card.grid_columnconfigure(0, weight=1)
-            card.grid_columnconfigure(1, weight=0)
+        # 將上一筆（原本最新）的卡片變暗
+        if self._history_widgets:
+            for child in self._history_widgets[0].winfo_children():
+                if isinstance(child, ctk.CTkLabel):
+                    child.configure(text_color='#A1A1AA')
+                    break
 
-            text_color = '#F4F4F5' if i == 0 else '#A1A1AA'
-            label = ctk.CTkLabel(
-                card, text=item, wraplength=270, justify='left',
-                font=ctk.CTkFont(family=font_family, size=14),
-                text_color=text_color, anchor='w',
-            )
-            label.grid(row=0, column=0, sticky='nsew', padx=(14, 4), pady=8)
+        # 超過 10 筆時移除最舊的卡片
+        if len(self._history_widgets) >= 10:
+            self._history_widgets.pop().destroy()
 
-            idx = i
-            btn = ctk.CTkButton(
-                card, text='複製', width=52, height=28, corner_radius=6,
-                fg_color='#3F3F46', hover_color='#52525B',
-                font=ctk.CTkFont(family=font_family, size=13),
-                command=lambda idx=idx: self._copy_history(idx),
-            )
-            btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=8)
+        # 現有卡片全部往下移一個 row（不重建，只改 grid 位置）
+        for i, card in enumerate(self._history_widgets):
+            card.grid(row=i + 1, column=0, sticky='ew', pady=(0, 8))
 
-            self._history_widgets.append(card)
+        # 在 row=0 建立新卡片
+        card = ctk.CTkFrame(self._result_scroll, fg_color='#27272A', corner_radius=12)
+        card.grid(row=0, column=0, sticky='ew', pady=(0, 8))
+        card.grid_columnconfigure(0, weight=1)
+        card.grid_columnconfigure(1, weight=0)
 
-    def _copy_history(self, idx: int):
+        label = ctk.CTkLabel(
+            card, text=self._history[0], wraplength=270, justify='left',
+            font=ctk.CTkFont(family=font_family, size=14),
+            text_color='#F4F4F5', anchor='w',
+        )
+        label.grid(row=0, column=0, sticky='nsew', padx=(14, 4), pady=8)
+
+        btn = ctk.CTkButton(
+            card, text='複製', width=52, height=28, corner_radius=6,
+            fg_color='#3F3F46', hover_color='#52525B',
+            font=ctk.CTkFont(family=font_family, size=13),
+            command=lambda c=card: self._copy_history(c),
+        )
+        btn.grid(row=0, column=1, sticky='ne', padx=(0, 10), pady=8)
+
+        self._history_widgets.insert(0, card)
+
+    def _copy_history(self, card: ctk.CTkFrame):
+        if card not in self._history_widgets:
+            return
+        idx = self._history_widgets.index(card)
         if idx < len(self._history):
             self.clipboard_clear()
             self.clipboard_append(self._history[idx])
-            btn = self._history_widgets[idx].winfo_children()[1]
-            btn.configure(text='✓')
-            self.after(1200, lambda b=btn: b.configure(text='複製'))
+            buttons = [c for c in card.winfo_children() if isinstance(c, ctk.CTkButton)]
+            if buttons:
+                buttons[0].configure(text='✓')
+                self.after(1200, lambda b=buttons[0]: b.configure(text='複製'))
 
     def _hotkey_display(self) -> str:
         hk = self._cfg.get('hotkey', 'alt+`')
