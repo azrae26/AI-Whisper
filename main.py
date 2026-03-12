@@ -1146,14 +1146,6 @@ class App(ctk.CTk):
                     name = event.name.lower() if event.name else ''
                     if not name:
                         return
-                    # DEBUG：記錄所有 KEY_DOWN 事件
-                    try:
-                        import pathlib
-                        _log = pathlib.Path(__file__).parent / 'key_debug.log'
-                        with open(_log, 'a', encoding='utf-8') as _f:
-                            _f.write(f'name={event.name!r} scan={getattr(event,"scan_code",None)} is_keypad={getattr(event,"is_keypad",None)} flags={getattr(event,"flags",None)}\n')
-                    except Exception:
-                        pass
                     for mods, expected_name, punct in _triggers:
                         if name == expected_name and all(keyboard.is_pressed(m) for m in mods):
                             p = punct
