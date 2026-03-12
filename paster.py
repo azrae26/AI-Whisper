@@ -314,7 +314,7 @@ def _execute_paste(text: str, delay_ms: int, t_received: float, end_prefix: str 
         _safe_print(f'[paster][{_now()}] ⏱️ 收到→貼上完成: {time.perf_counter() - t_received:.2f}s')
 
     # 等待 Ctrl+V 完成後還原原本的剪貼簿
-    time.sleep(0.15)
+    time.sleep(0.40)
     if old_clipboard is not None:
         _restore_clipboard_all(old_clipboard)
         _safe_print(f'[paster][{_now()}] 📋 剪貼簿已還原（{len(old_clipboard)} 種格式）')
