@@ -228,7 +228,9 @@ class WaveformOverlay:
         self._win.geometry(f'{_WIN_W}x{_WIN_H}+{self._pos_x}+{self._pos_y}')
         self._win.deiconify()
         self._win.lift()
+        _t_ui0 = time.perf_counter()
         self._win.update_idletasks()
+        _safe_print(f'[waveform][{_now()}] ⏱️ update_idletasks() {(time.perf_counter() - _t_ui0) * 1000:.1f}ms')
 
         # 視窗可見後才初始化分層樣式
         self._ensure_layered()
@@ -240,7 +242,9 @@ class WaveformOverlay:
                 0x0002 | 0x0001 | 0x0010  # SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
             )
 
+        _t_blit0 = time.perf_counter()
         self._blit(self._gradient_bg)
+        _safe_print(f'[waveform][{_now()}] ⏱️ _blit() {(time.perf_counter() - _t_blit0) * 1000:.1f}ms')
 
     def hide(self):
         """隱藏並停止所有動畫"""

@@ -1,8 +1,10 @@
 # 功能：麥克風錄音
-# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式 VAD、即時波形資料、自動分段送出
-# 依賴：sounddevice, numpy, wave, io, threading
+# 職責：用 sounddevice 串流錄音，停止後輸出 WAV bytes；含分段式 VAD、即時波形資料、自動分段送出、預熱機制（stop 後 stream 保持開啟，shutdown 才真正關閉）
+# 依賴：sounddevice, numpy, wave, io, threading, datetime, time
 
+import datetime
 import io
+import time
 import threading
 import wave
 
@@ -65,9 +67,14 @@ class Recorder:
         self._segment_samples: int = 0
         self._silence_chunks: int = 0
         self._chunk_samples: int = 0
+        # 麥克風實際開啟延遲量測
+        self._stream_start_time: float = 0.0
+        self._first_cb_logged: bool = False
 
     def start(self) -> bool:
-        """開始錄音，回傳是否成功"""
+        """開始錄音，回傳是否成功。
+        若 stream 已預熱（pre-warmed），直接翻轉 flag，跳過 OS 開裝置延遲。
+        """
         with self._lock:
             if self._recording:
                 return False
@@ -78,7 +85,23 @@ class Recorder:
             self._chunk_samples = 0
             self._recording = True
 
+            if self._stream is not None:
+                # 預熱命中：stream 已在跑，直接開始收音
+                _safe_print(f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] 🚀 預熱命中，直接開始錄音')
+                return True
+
+        # Cold start：需要重新建立 stream
+        _perf = time.perf_counter  # 預先捕捉，避免被 _callback 的 time 參數遮蔽
+        self._first_cb_logged = False
+
         def _callback(indata, frames, time, status):
+            if not self._first_cb_logged:
+                self._first_cb_logged = True
+                delay_ms = (_perf() - self._stream_start_time) * 1000
+                _safe_print(
+                    f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] '
+                    f'🎤 第一包音訊到達，麥克風實際開啟延遲 {delay_ms:.1f}ms'
+                )
             if self._recording:
                 self._frames.append(indata.copy())
                 chunk_len = len(indata)
@@ -100,13 +123,20 @@ class Recorder:
                     self._silence_chunks = 0
 
         try:
+            _t0 = time.perf_counter()
             self._stream = sd.InputStream(
                 samplerate=SAMPLE_RATE,
                 channels=CHANNELS,
                 dtype='int16',
                 callback=_callback,
             )
+            _t1 = time.perf_counter()
+            _safe_print(f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] ⏱️ InputStream() {(_t1 - _t0) * 1000:.1f}ms')
+            self._stream_start_time = time.perf_counter()
             self._stream.start()
+            _t2 = time.perf_counter()
+            _safe_print(f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] ⏱️ stream.start() {(_t2 - _t1) * 1000:.1f}ms')
+            _safe_print(f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] 🎙️ 錄音就緒，總初始化 {(_t2 - _t0) * 1000:.1f}ms')
             return True
         except Exception as e:
             _safe_print(f'[recorder][start] ❌ 錄音裝置錯誤: {e}')
@@ -114,19 +144,13 @@ class Recorder:
             return False
 
     def stop(self) -> bytes | None:
-        """停止錄音並回傳 WAV bytes，若無音訊回傳 None"""
+        """停止錄音並回傳 WAV bytes，若無音訊回傳 None。
+        stream 保持開啟（預熱），待 shutdown() 才真正關閉。
+        """
         with self._lock:
             if not self._recording:
                 return None
             self._recording = False
-
-        if self._stream:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception:
-                pass
-            self._stream = None
 
         if not self._frames:
             return None
@@ -156,6 +180,19 @@ class Recorder:
         buf.seek(0)
         return buf.read()
 
+    def shutdown(self) -> None:
+        """實際關閉 stream（idle 超時或 app 退出時呼叫），釋放麥克風裝置。"""
+        with self._lock:
+            self._recording = False
+        if self._stream:
+            try:
+                self._stream.stop()
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        _safe_print(f'[recorder][{datetime.datetime.now().strftime("%H:%M:%S")}] 💤 預熱 stream 已關閉')
+
     def get_waveform(self) -> list[float]:
         """取得最近的波形資料（0~1 浮點陣列），供 UI 繪製"""
         with self._wf_lock:
@@ -178,19 +215,22 @@ class Recorder:
             frames = self._frames
             self._frames = []
             self._segment_samples = 0
-            # 保留 _silence_chunks 不重置，因為 flush 就是在靜音中觸發的
+            # _silence_chunks 在 flush 完成後才重置，避免 flush 後立即重觸發
 
         audio_data = np.concatenate(frames, axis=0)
         duration = len(audio_data) / SAMPLE_RATE
 
         if duration < MIN_DURATION_SEC:
             _safe_print(f'[recorder][flush] 段落太短 ({duration:.2f}s)，略過')
+            self._silence_chunks = 0
             return None
 
         if not _has_speech(audio_data):
             _safe_print('[recorder][flush] ❌ VAD 未偵測到語音，略過')
+            self._silence_chunks = 0
             return None
 
+        self._silence_chunks = 0
         _safe_print(f'[recorder][flush] ✅ 取出 {duration:.1f}s 音訊段落')
         return self._to_wav_bytes(audio_data)
 

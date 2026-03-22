@@ -14,35 +14,34 @@ globs: "**/*.py"
 
 ## 重啟流程
 
-### Step 1：終止舊程序並重啟（block_until_ms: 0 立刻背景化）
+**永遠只使用 `restart-with-log.ps1`**，不要直接執行 `py main.py`（會產生多餘的 CMD 視窗）。
+
+### Step 1：執行重啟腳本（block_until_ms: 15000 等待輸出）
 
 ```powershell
-taskkill /F /IM python.exe 2>$null; taskkill /F /IM "AI Whisper.exe" 2>$null; Start-Sleep -Seconds 1; py -u main.py
+powershell -ExecutionPolicy Bypass -File "restart-with-log.ps1"
 ```
 
 **重要參數：**
-- `block_until_ms: 0`：立刻將指令丟到背景，不等待程序結束
-- `-u`：Python unbuffered mode，確保 LOG 即時輸出
+- `block_until_ms: 15000`：等待腳本完成（腳本內含 4 秒等待 + 讀 log）
 - `working_directory`：指向 workspace 根目錄，不要寫死磁碟代號（家裡 F:\、公司 D:\）
+- 腳本已包含：終止舊程序 → 啟動新程序 → 等待 4 秒 → 顯示 log 末 15 行
 
-### Step 2：等待 3 秒後確認啟動成功
+### Step 2：確認啟動成功
 
-讀取背景 terminal 檔的最後 10 行，確認有出現 `[main][HH:MM:SS]` 啟動訊息。
+確認輸出中有出現 `[main][HH:MM:SS] ✅ 快捷鍵` 等啟動訊息。
 
-```powershell
-Start-Sleep -Seconds 3
-Get-Content "<terminals 資料夾>/<Shell ID>.txt" -Tail 10
-```
+**若 log 為空：不代表啟動失敗**，只是程序還沒輸出，不要額外再執行 `py main.py`。
 
 ## LOG 監控
 
-- 輸出串流到 `terminals/<Shell ID>.txt`，後續可用 `Get-Content ... -Tail N` 讀取 LOG
-- 若使用者說「幫我看 LOG」、「看 log」，直接讀取該 terminal 檔即可
+- log 寫入 `ai_whisper_yyyyMMdd_HHmmss.log`（workspace 根目錄）
+- 若使用者說「幫我看 LOG」、「看 log」，讀取最新的 `ai_whisper_*.log` 檔
 
 ## 注意事項
 
 - 使用 PowerShell，不使用 `&&`
-- 不要用 `Stop-Process + Start-Sleep`，太慢
+- 不要直接執行 `py main.py`，一律透過 `restart-with-log.ps1`
 
 ## 程式碼品質
 

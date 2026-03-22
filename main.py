@@ -1,5 +1,5 @@
 # 功能：AI Whisper 語音轉文字主程式
-# 職責：UI 管理（主頁面/設定頁面）、系統列常駐、全域快捷鍵、錄音與辨識流程協調、辨識結果文字校正
+# 職責：UI 管理（主頁面/設定頁面）、系統列常駐、全域快捷鍵、錄音與辨識流程協調、辨識結果文字校正、麥克風預熱 idle 超時管理
 # 依賴：customtkinter, pystray, keyboard, recorder, transcriber, paster, settings
 
 import ctypes
@@ -151,6 +151,7 @@ class App(ctk.CTk):
         self._anim_job = None
         self._history: list[str] = []  # 最近 10 組辨識結果
         self._segment_check_job = None  # 分段辨識定時檢查 job
+        self._warmup_shutdown_job = None  # 預熱 idle 超時計時器
 
         self._build_ui()
         self._waveform_overlay = waveform.WaveformOverlay(self)
@@ -443,6 +444,40 @@ class App(ctk.CTk):
             )
             entry.grid(row=0, column=1, sticky='e')
             entry.bind('<FocusOut>', lambda e: self._auto_save())
+
+        # ── 1c. 麥克風預熱保持時間
+        add_label('麥克風預熱保持時間')
+        row += 1
+
+        ctk.CTkLabel(
+            scroll,
+            text='停止錄音後，麥克風保持預熱狀態的時間（分鐘）；逾時自動關閉，下次使用時重新開啟',
+            font=ctk.CTkFont(family=font_family, size=12), text_color='#71717A',
+            wraplength=300, justify='left',
+        ).grid(row=row, column=0, sticky='w', pady=(0, 8))
+        row += 1
+
+        warmup_row = ctk.CTkFrame(scroll, fg_color='transparent')
+        warmup_row.grid(row=row, column=0, sticky='ew', pady=(0, 20))
+        warmup_row.grid_columnconfigure(0, weight=1)
+        row += 1
+
+        ctk.CTkLabel(
+            warmup_row, text='保持時間（分鐘）',
+            font=ctk.CTkFont(family=font_family, size=13),
+            text_color='#A1A1AA', anchor='w',
+        ).grid(row=0, column=0, sticky='w')
+
+        self._warmup_idle_var = ctk.StringVar(value=str(self._cfg.get('warmup_idle_minutes', 10)))
+        warmup_entry = ctk.CTkEntry(
+            warmup_row, textvariable=self._warmup_idle_var,
+            height=36, width=90,
+            font=ctk.CTkFont(family=font_family, size=14),
+            fg_color='#27272A', border_color='#3F3F46',
+            justify='center',
+        )
+        warmup_entry.grid(row=0, column=1, sticky='e')
+        warmup_entry.bind('<FocusOut>', lambda e: self._auto_save())
 
         # ── 2. 識別快捷鍵（自動加句號）
         add_label('識別快捷鍵（自動加句號）')
@@ -755,6 +790,7 @@ class App(ctk.CTk):
             'segment_silence': self._safe_float(seg.get('segment_silence'), AUTO_SEGMENT_SILENCE_SEC),
             'segment_max_accum': self._safe_float(seg.get('segment_max_accum'), AUTO_SEGMENT_MAX_ACCUM_SEC),
             'segment_short_silence': self._safe_float(seg.get('segment_short_silence'), AUTO_SEGMENT_SHORT_SILENCE_SEC),
+            'warmup_idle_minutes': self._safe_float(self._warmup_idle_var, 10.0),
         }
         settings.save(new_cfg)
         settings.set_startup(new_cfg['startup'])
@@ -774,7 +810,13 @@ class App(ctk.CTk):
             self._stop_recording()
 
     def _start_recording(self):
+        # 取消預熱 idle 超時（使用者重新錄音，不需要關閉 stream）
+        if self._warmup_shutdown_job:
+            self.after_cancel(self._warmup_shutdown_job)
+            self._warmup_shutdown_job = None
+        _t_rec_init = time.perf_counter()
         ok = recorder.start()
+        _debug_print(f'[main][{now_str()}] ⏱️ recorder.start() 耗時 {(time.perf_counter() - _t_rec_init) * 1000:.1f}ms，ok={ok}')
         if not ok:
             self._set_status('❌ 無法存取麥克風', '#EF4444')
             return
@@ -811,6 +853,7 @@ class App(ctk.CTk):
         self._set_status('辨識中…', '#A78BFA')
 
         wav_bytes = recorder.stop()
+        self._schedule_warmup_shutdown()  # 錄音結束後啟動 idle 超時計時器
         if not wav_bytes:
             self._reset_idle()
             self._set_status('⚠ 未錄到音訊', '#F59E0B')
@@ -820,6 +863,21 @@ class App(ctk.CTk):
         _debug_print(f'[main][{now_str()}] ✅ 錄音完成，送出辨識')
         paster.prefetch_cursor_position(len(wav_bytes))
         threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
+
+    def _schedule_warmup_shutdown(self):
+        """錄音結束後，啟動預熱 idle 超時計時器；若已有舊計時器先取消。"""
+        if self._warmup_shutdown_job:
+            self.after_cancel(self._warmup_shutdown_job)
+        idle_min = self._safe_float(getattr(self, '_warmup_idle_var', None), 10.0)
+        ms = int(idle_min * 60 * 1000)
+        self._warmup_shutdown_job = self.after(ms, self._do_warmup_shutdown)
+        _debug_print(f'[main][{now_str()}] ⏳ 預熱 idle 計時器啟動，{idle_min:.0f} 分鐘後關閉麥克風')
+
+    def _do_warmup_shutdown(self):
+        """idle 超時到期，關閉預熱 stream。"""
+        self._warmup_shutdown_job = None
+        recorder.shutdown()
+        _debug_print(f'[main][{now_str()}] 💤 預熱 stream 已關閉（idle 超時）')
 
     def _check_segment(self):
         """每 200ms 檢查是否達到自動分段條件（累積 >= AUTO_SEGMENT_MAX_ACCUM_SEC 且靜音 >= AUTO_SEGMENT_SHORT_SILENCE_SEC，或靜音 >= AUTO_SEGMENT_SILENCE_SEC 立即送出）"""
@@ -1132,12 +1190,20 @@ class App(ctk.CTk):
             if hk_main in _NAME_HOOK_KEYS:
                 name_triggers.append((hk_mods, hk_main, '。'))
             else:
-                keyboard.add_hotkey(hotkey, lambda: self.after(0, lambda: self._toggle_recording('。')))  # type: ignore[arg-type]
+                def _hk_fired(p='。'):
+                    _t = time.perf_counter()
+                    _debug_print(f'[main][{now_str()}] ⌨️ 熱鍵觸發，排入 after(0)')
+                    self.after(0, lambda: (_debug_print(f'[main][{now_str()}] ⌨️ after(0) 執行延遲 {(time.perf_counter() - _t) * 1000:.1f}ms'), self._toggle_recording(p)))
+                keyboard.add_hotkey(hotkey, _hk_fired)  # type: ignore[arg-type]
 
             if hc_main in _NAME_HOOK_KEYS:
                 name_triggers.append((hc_mods, hc_main, '，'))
             else:
-                keyboard.add_hotkey(hotkey_comma, lambda: self.after(0, lambda: self._toggle_recording('，')))  # type: ignore[arg-type]
+                def _hk_comma_fired(p='，'):
+                    _t = time.perf_counter()
+                    _debug_print(f'[main][{now_str()}] ⌨️ 熱鍵觸發，排入 after(0)')
+                    self.after(0, lambda: (_debug_print(f'[main][{now_str()}] ⌨️ after(0) 執行延遲 {(time.perf_counter() - _t) * 1000:.1f}ms'), self._toggle_recording(p)))
+                keyboard.add_hotkey(hotkey_comma, _hk_comma_fired)  # type: ignore[arg-type]
 
             if name_triggers:
                 def _on_insert_hook(event, _triggers=name_triggers):
@@ -1149,7 +1215,9 @@ class App(ctk.CTk):
                     for mods, expected_name, punct in _triggers:
                         if name == expected_name and all(keyboard.is_pressed(m) for m in mods):
                             p = punct
-                            self.after(0, lambda p=p: self._toggle_recording(p))
+                            _t = time.perf_counter()
+                            _debug_print(f'[main][{now_str()}] ⌨️ 熱鍵觸發（name hook），排入 after(0)')
+                            self.after(0, lambda p=p, _t=_t: (_debug_print(f'[main][{now_str()}] ⌨️ after(0) 執行延遲 {(time.perf_counter() - _t) * 1000:.1f}ms'), self._toggle_recording(p)))
                             break
 
                 self._comma_hook_remove = keyboard.hook(_on_insert_hook)
@@ -1275,7 +1343,7 @@ class App(ctk.CTk):
 
         def quit_app(icon, item):
             icon.stop()
-            self.after(0, lambda: (self._save_geometry(), self.destroy()))
+            self.after(0, lambda: (recorder.shutdown(), self._save_geometry(), self.destroy()))
 
         menu = pystray.Menu(
             pystray.MenuItem('開啟視窗', show_window, default=True),
