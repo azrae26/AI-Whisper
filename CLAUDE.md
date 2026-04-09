@@ -40,6 +40,8 @@
 | `.cursor/skills/restart/SKILL.md` | 重啟流程：重啟指令、LOG 監控、程式碼品質規範 |
 | `.cursor/skills/restart/restart-with-log.ps1` | 重啟腳本：終止舊程序、啟動新程序、產生時間戳 log |
 | `.cursor/skills/build-and-package/SKILL.md` | 打包流程：備份/還原 config、PyInstaller、先複製再 zip（避開檔案鎖）、啟動 exe |
+| `.cursor/skills/build-and-package/pack.ps1` | 純打包腳本（不推 git）：終止程序 → build → zip，說「包」時優先用此腳本 |
+| `.cursor/skills/build-and-package/deploy.ps1` | 打包+推 git：-Role build 打包、-Role zip 壓縮啟動、-Role main 並行打包+推 git |
 
 ## 資料流簡圖
 

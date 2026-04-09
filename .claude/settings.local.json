@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls f:/Cursor/AI Whisper/ai_whisper_*.log)",
+      "Bash(ls \"f:/Cursor/AI Whisper/\"*.log)",
+      "Bash(tasklist)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"restart-with-log.ps1\")",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(mkdir -p \"f:/Cursor/AI Whisper/.claude/skills\")",
+      "Bash(cp \"C:/Users/Administrator/.claude/skills/restart.md\" \"f:/Cursor/AI Whisper/.claude/skills/restart.md\")",
+      "Bash(rm \"C:/Users/Administrator/.claude/skills/restart.md\")",
+      "Bash(mv \"f:/Cursor/AI Whisper/.claude/skills/restart.md\" \"f:/Cursor/AI Whisper/.cursor/skills/restart.md\")",
+      "Bash(rmdir \"f:/Cursor/AI Whisper/.claude/skills\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \".cursor/skills/restart/restart-with-log.ps1\")",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \":*)",
+      "Bash(powershell -ExecutionPolicy Bypass -Command \"taskkill /F /IM ''AI Whisper.exe''; taskkill /F /IM python.exe; Start-Sleep -Seconds 1; Write-Host ''Step 1 done''\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"f:\\\\Cursor\\\\AI Whisper\\\\.cursor\\\\skills\\\\build-and-package\\\\pack.ps1\")",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"f:\\\\Cursor\\\\AI Whisper\\\\deploy.ps1\" -Role build)",
+      "Bash(powershell -ExecutionPolicy Bypass -File \"f:\\\\Cursor\\\\AI Whisper\\\\deploy.ps1\" -Role zip)"
+    ]
+  }
+}
