@@ -18,6 +18,46 @@ try:
 except Exception:
     pass
 
+# 無論用什麼方式啟動，都將 stdout/stderr 同步寫入時間戳 log 檔
+try:
+    _log_dir = os.path.dirname(os.path.abspath(__file__))
+    _log_path = os.path.join(_log_dir, f'ai_whisper_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+    _log_file = open(_log_path, 'w', encoding='utf-8', buffering=1)  # line-buffered
+
+    class _Tee:
+        """同時寫入原始 stream 與 log 檔"""
+        def __init__(self, original, log):
+            self._orig = original
+            self._log = log
+        def write(self, s):
+            try:
+                if self._orig:
+                    self._orig.write(s)
+            except Exception:
+                pass
+            try:
+                self._log.write(s)
+            except Exception:
+                pass
+        def flush(self):
+            try:
+                if self._orig:
+                    self._orig.flush()
+            except Exception:
+                pass
+            try:
+                self._log.flush()
+            except Exception:
+                pass
+        def __getattr__(self, name):
+            return getattr(self._orig, name)
+
+    sys.stdout = _Tee(sys.stdout, _log_file)
+    sys.stderr = _Tee(sys.stderr, _log_file)
+    print(f'[main] LOG -> {_log_path}', flush=True)
+except Exception:
+    pass
+
 # 在任何 tkinter 初始化之前，鎖定為 System DPI Awareness
 # 跨螢幕移動時由 Windows GPU 做點陣圖縮放，避免 tkinter 逐 widget 重算造成 lag
 try:
@@ -817,6 +857,9 @@ class App(ctk.CTk):
         _t_rec_init = time.perf_counter()
         ok = recorder.start()
         _debug_print(f'[main][{now_str()}] ⏱️ recorder.start() 耗時 {(time.perf_counter() - _t_rec_init) * 1000:.1f}ms，ok={ok}')
+        # 初始化分段順序控制：第一個 event 預先 set，代表「前一段已就緒」
+        self._prev_seg_event = threading.Event()
+        self._prev_seg_event.set()
         if not ok:
             self._set_status('❌ 無法存取麥克風', '#EF4444')
             return
@@ -862,7 +905,8 @@ class App(ctk.CTk):
 
         _debug_print(f'[main][{now_str()}] ✅ 錄音完成，送出辨識')
         paster.prefetch_cursor_position(len(wav_bytes))
-        threading.Thread(target=self._run_transcribe, args=(wav_bytes,), daemon=True).start()
+        prev_event = self._prev_seg_event
+        threading.Thread(target=self._run_transcribe, args=(wav_bytes, prev_event), daemon=True).start()
 
     def _schedule_warmup_shutdown(self):
         """錄音結束後，啟動預熱 idle 超時計時器；若已有舊計時器先取消。"""
@@ -891,8 +935,11 @@ class App(ctk.CTk):
                 reason = '累積夠長+短靜音' if (accumulated >= AUTO_SEGMENT_MAX_ACCUM_SEC and silence >= AUTO_SEGMENT_SHORT_SILENCE_SEC) else f'靜音達{AUTO_SEGMENT_SILENCE_SEC:.0f}s'
                 _debug_print(f'[main][{now_str()}] ✂️ 自動分段送出（{reason}，累積 {accumulated:.1f}s，靜音 {silence:.1f}s）')
                 paster.prefetch_cursor_position(len(wav_bytes))
+                prev_event = self._prev_seg_event
+                my_event = threading.Event()
+                self._prev_seg_event = my_event
                 threading.Thread(
-                    target=self._run_segment_transcribe, args=(wav_bytes,), daemon=True
+                    target=self._run_segment_transcribe, args=(wav_bytes, prev_event, my_event), daemon=True
                 ).start()
         self._segment_check_job = self.after(200, self._check_segment)
 
@@ -925,12 +972,13 @@ class App(ctk.CTk):
             return payload
         raise Exception(payload)
 
-    def _run_segment_transcribe(self, wav_bytes: bytes):
-        """分段辨識 thread：辨識完成後貼上並加入歷史，不影響錄音狀態"""
+    def _run_segment_transcribe(self, wav_bytes: bytes, prev_event: threading.Event, my_event: threading.Event):
+        """分段辨識 thread：辨識完成後依序貼上並加入歷史，不影響錄音狀態"""
         cfg = settings.get()
         api_key = cfg.get('apiKey', '')
         model = cfg.get('model', 'gpt-4o-transcribe')
         if not api_key:
+            my_event.set()
             return
         try:
             text = self._transcribe_with_retry(wav_bytes, api_key, model)
@@ -939,9 +987,12 @@ class App(ctk.CTk):
             text_clean = _apply_text_corrections(text_clean)
             _debug_print(f'[main][{now_str()}] ✅ 分段辨識完成: "{text_clean}"')
             if text_clean:
+                prev_event.wait(timeout=30)  # 等待前一段進入貼上 queue，確保順序正確
                 paster.paste_text(text_clean, delay_ms=30, t_received=t_received, end_prefix=self._paste_prefix)
+            my_event.set()  # 通知下一段可以貼上
             self.after(0, lambda: self._on_segment_done(text_clean))
         except Exception as e:
+            my_event.set()  # 失敗也要通知，避免後續段卡住
             _debug_print(f'[main][{now_str()}] ❌ 分段辨識失敗: {e}')
 
     def _on_segment_done(self, text: str):
@@ -950,7 +1001,7 @@ class App(ctk.CTk):
             return
         self._set_result(text)
 
-    def _run_transcribe(self, wav_bytes: bytes):
+    def _run_transcribe(self, wav_bytes: bytes, prev_event: threading.Event | None = None):
         cfg = settings.get()
         api_key = cfg.get('apiKey', '')
         model = cfg.get('model', 'gpt-4o-transcribe')
@@ -968,6 +1019,8 @@ class App(ctk.CTk):
             text_clean = _apply_text_corrections(text_clean)
             _debug_print(f'[main][{now_str()}] ✅ 辨識完成: "{text_clean}"')
             if text_clean:
+                if prev_event is not None:
+                    prev_event.wait(timeout=30)  # 等待所有分段先貼上
                 paster.paste_text(text_clean, t_received=t_received, end_prefix=self._paste_prefix)
             self.after(0, lambda: self._on_transcribe_done(text_clean))
         except Exception as e:

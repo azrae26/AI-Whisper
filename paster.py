@@ -307,7 +307,21 @@ def _execute_paste(text: str, delay_ms: int, t_received: float, end_prefix: str 
     # 暫存原本的剪貼簿所有格式（文字、圖片等）
     old_clipboard = _save_clipboard_all()
 
-    _set_clipboard_ctypes(final_text)
+    cb_ok = _set_clipboard_ctypes(final_text)
+    if not cb_ok:
+        _safe_print(f'[paster][{_now()}] ❌ [PASTE-FAIL] 剪貼簿寫入失敗，text={repr(final_text[:40])}')
+
+    # 記錄貼上時的前景視窗（診斷「有辨識但沒貼上」問題）
+    try:
+        _u32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        _hwnd = _u32.GetForegroundWindow()
+        _buf = ctypes.create_unicode_buffer(128)
+        _u32.GetWindowTextW(_hwnd, _buf, 128)
+        _win_title = _buf.value
+    except Exception:
+        _hwnd, _win_title = 0, '(unknown)'
+    _safe_print(f'[paster][{_now()}] ⌨️ Ctrl+V 送出，cb_ok={cb_ok}，視窗="{_win_title}"，hwnd={_hwnd:#010x}，text={repr(final_text[:40])}')
+
     keyboard.send('ctrl+v')
 
     if t_received:
