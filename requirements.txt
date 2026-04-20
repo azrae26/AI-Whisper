@@ -9,3 +9,5 @@ opencc-python-reimplemented
 comtypes
 uiautomation
 cn2an
+# Silero VAD 透過 torch.hub 自動下載模型（首次使用需連網）
+# torch 由 openai-whisper 安裝提供，無需另行列入

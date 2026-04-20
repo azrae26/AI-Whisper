@@ -11,6 +11,9 @@ import wave
 import numpy as np
 import sounddevice as sd
 
+_silero_model = None
+_silero_available: bool | None = None  # None=未嘗試, True=可用, False=不可用
+
 
 def _safe_print(msg: str):
     try:
@@ -33,22 +36,74 @@ VAD_SPEECH_RATIO = 0.08
 MIN_DURATION_SEC = 0.5
 # 靜音偵測閾值：waveform level（RMS/5000）低於此值視為靜音
 _SILENCE_LEVEL = 0.06
+# ── Silero VAD 參數 ──────────────────────────────────────────────────────────
+SILERO_CONFIDENCE_THRESHOLD = 0.5  # 每幀信心分數閾值（0~1）
+SILERO_FRAME_SIZE = 512            # 16kHz 下 512 samples = 32ms
+
+
+def _load_silero_vad() -> bool:
+    """懶載入 Silero VAD 模型，失敗時永久降級至 RMS 備援。"""
+    global _silero_model, _silero_available
+    if _silero_available is not None:
+        return _silero_available
+    try:
+        import torch
+        _safe_print('[recorder][VAD] 載入 Silero VAD 模型...')
+        model, _ = torch.hub.load(
+            'snakers4/silero-vad', 'silero_vad',
+            force_reload=False, trust_repo=True,
+        )
+        model.eval()
+        _silero_model = model
+        _silero_available = True
+        _safe_print('[recorder][VAD] Silero VAD 模型載入完成')
+    except Exception as e:
+        _safe_print(f'[recorder][VAD] ⚠️ Silero VAD 載入失敗，使用 RMS 備援: {e}')
+        _silero_available = False
+    return _silero_available
 
 
 def _has_speech(audio: np.ndarray) -> bool:
-    """分段式 VAD：把音訊切成 30ms 幀，計算有語音能量的幀比例。"""
-    frame_len = int(SAMPLE_RATE * VAD_FRAME_SEC)
-    samples = audio.flatten().astype(np.float32)
-    n_frames = len(samples) // frame_len
-    if n_frames == 0:
+    """語音活動偵測：優先使用 Silero VAD，不可用時退回 RMS 閾值法。"""
+    samples = audio.flatten()
+    n_samples = len(samples)
+
+    if n_samples < SILERO_FRAME_SIZE:
         return False
 
-    frames = samples[:n_frames * frame_len].reshape(n_frames, frame_len)
+    # ── Silero 路徑 ──────────────────────────────────────────────────────────
+    if _load_silero_vad():
+        import torch
+        audio_f32 = samples.astype(np.float32) / 32768.0
+        _silero_model.reset_states()  # 重置 GRU 狀態，避免跨錄音殘留
+        n_frames = n_samples // SILERO_FRAME_SIZE
+        speech_frames = 0
+        with torch.no_grad():
+            for i in range(n_frames):
+                frame = audio_f32[i * SILERO_FRAME_SIZE:(i + 1) * SILERO_FRAME_SIZE]
+                tensor = torch.from_numpy(frame).unsqueeze(0)
+                confidence = _silero_model(tensor, SAMPLE_RATE).item()
+                if confidence >= SILERO_CONFIDENCE_THRESHOLD:
+                    speech_frames += 1
+        ratio = speech_frames / n_frames
+        _safe_print(
+            f'[recorder][VAD] Silero 語音幀 {speech_frames}/{n_frames} ({ratio:.1%})，'
+            f'信心閾值 {SILERO_CONFIDENCE_THRESHOLD}，最低比例 {VAD_SPEECH_RATIO:.0%}'
+        )
+        return ratio >= VAD_SPEECH_RATIO
+
+    # ── RMS 備援路徑 ─────────────────────────────────────────────────────────
+    frame_len = int(SAMPLE_RATE * VAD_FRAME_SEC)
+    f32 = samples.astype(np.float32)
+    n_frames = len(f32) // frame_len
+    if n_frames == 0:
+        return False
+    frames = f32[:n_frames * frame_len].reshape(n_frames, frame_len)
     rms_per_frame = np.sqrt(np.mean(frames ** 2, axis=1))
     speech_frames = int(np.sum(rms_per_frame > VAD_FRAME_THRESHOLD))
     ratio = speech_frames / n_frames
     _safe_print(
-        f'[recorder][VAD] 語音幀 {speech_frames}/{n_frames} ({ratio:.1%})，'
+        f'[recorder][VAD] RMS 語音幀 {speech_frames}/{n_frames} ({ratio:.1%})，'
         f'閾值 {VAD_FRAME_THRESHOLD}，最低比例 {VAD_SPEECH_RATIO:.0%}'
     )
     return ratio >= VAD_SPEECH_RATIO

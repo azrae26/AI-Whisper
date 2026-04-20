@@ -1,6 +1,6 @@
 # 功能：並行執行 git push 與 PyInstaller 打包
 # 職責：-Role main 同時啟動 build/zip 背景進程並執行推送；-Role build 執行 PyInstaller；-Role zip 等待建置完成後壓縮
-# 依賴：.venv-pack/（含 PyInstaller 與 customtkinter）、git
+# 依賴：.venv-pack/（含 PyInstaller 與 customtkinter）、git；$workspace 固定解析為專案根（本腳本在 .cursor/skills/build-and-package/）
 
 param(
     [string]  $Role    = "main",
@@ -8,7 +8,8 @@ param(
     [string[]]$Files   = @()
 )
 
-$workspace = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$workspace = (Resolve-Path (Join-Path $scriptDir "..\..\..")).Path
 $self      = $MyInvocation.MyCommand.Path
 $python    = "$workspace\.venv-pack\Scripts\python.exe"
 $ctkPath   = "$workspace\.venv-pack\Lib\site-packages\customtkinter"
