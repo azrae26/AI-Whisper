@@ -49,3 +49,5 @@ python -m PyInstaller --onedir --windowed --icon=assets/icon.ico --name="AI Whis
 ```
 customtkinter, Pillow, pystray, keyboard, sounddevice, numpy, openai
 ```
+
+錄音分段偵測優先使用 **Silero VAD**（透過 `torch.hub` 載入，首次使用需連網）；若 PyTorch／模型無法載入，會自動改為 **RMS 閾值** 備援（行為見 `recorder.py`）。
